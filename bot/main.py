@@ -3,15 +3,16 @@
 Управление кнопками внизу экрана и пошаговыми диалогами: бот спрашивает —
 пользователь отвечает. Команды через «/» тоже работают как дубль.
 
-Возможности: запись перекуров, красивые графики (как в Excel), статистика,
-рейтинг участников (% от отметки 100000), редактирование/удаление записей,
-фото к перекуру. Данные в SQLite по каждому пользователю.
+Подход без морализаторства: просто показываем правду в цифрах — сколько денег
+и времени «в дым», как давно не куришь (интервалы), и тренд неделя-к-неделе.
+Рейтинг — «у кого спокойнее» (меньше за неделю — выше). Данные в SQLite.
 """
 
 from __future__ import annotations
 
 import logging
 import os
+from datetime import date, datetime, timedelta
 
 from telegram import (
     InlineKeyboardButton,
@@ -37,16 +38,19 @@ logging.basicConfig(
 log = logging.getLogger("cigarette-bot")
 
 PHOTO_DIR = os.environ.get("PHOTO_DIR", "/data/photos")
-GOAL = 100_000  # общая отметка — 100 000 сигарет
+MIN_PER_CIG = 5  # средняя длительность одной сигареты, минут (для оценки времени)
 
 # ── Кнопки (подписи) ─────────────────────────────────────────────
 BTN_ADD = "🚬 Записать перекур"
-BTN_CHART = "📈 График перекуров"
-BTN_TOTAL = "🔥 Всего сигарет"
+BTN_CHART = "📈 График"
 BTN_DAYS = "📊 По дням"
+BTN_MONEY = "💸 Сожжено"
+BTN_INTERVALS = "⏱ Интервалы"
+BTN_TREND = "📉 Тренд"
 BTN_STATS = "📋 Статистика"
 BTN_TOP = "🏆 Рейтинг"
 BTN_EDIT = "✏️ Изменить записи"
+BTN_SETTINGS = "⚙️ Настройки"
 BTN_NAME = "🙍 Сменить имя"
 BTN_HELP = "ℹ️ Помощь"
 BTN_CANCEL = "❌ Отмена"
@@ -55,33 +59,68 @@ BTN_SKIP = "⏭ Пропустить"
 MAIN_KB = ReplyKeyboardMarkup(
     [
         [BTN_ADD],
-        [BTN_CHART, BTN_TOTAL],
-        [BTN_DAYS, BTN_STATS],
+        [BTN_CHART, BTN_DAYS],
+        [BTN_MONEY, BTN_INTERVALS],
+        [BTN_TREND, BTN_STATS],
         [BTN_TOP, BTN_EDIT],
-        [BTN_NAME, BTN_HELP],
+        [BTN_SETTINGS, BTN_NAME],
+        [BTN_HELP],
     ],
     resize_keyboard=True,
 )
 CANCEL_KB = ReplyKeyboardMarkup([[BTN_CANCEL]], resize_keyboard=True)
 SKIP_KB = ReplyKeyboardMarkup([[BTN_SKIP]], resize_keyboard=True)
+CUR_KB = ReplyKeyboardMarkup([["грн", "₽"], ["$", "€"], [BTN_CANCEL]], resize_keyboard=True)
+PACK_KB = ReplyKeyboardMarkup([["20"], [BTN_CANCEL]], resize_keyboard=True)
 
 # ── Состояния диалогов ───────────────────────────────────────────
-ADD_COUNT, NAME, EDIT_VALUE = range(3)
+ADD_COUNT, NAME, EDIT_VALUE, SET_CUR, SET_PRICE, SET_PACK = range(6)
 
 HELP = (
     "🚬 <b>Счётчик сигарет</b>\n\n"
     "Пользуйся кнопками внизу 👇\n\n"
     "• <b>Записать перекур</b> — бот спросит, сколько сигарет ты выкурил\n"
-    "• <b>График перекуров</b> — линейный график по перекурам\n"
-    "• <b>Всего сигарет</b> — накопительный график «сколько уже всего»\n"
+    "• <b>График</b> — линейный график по перекурам\n"
     "• <b>По дням</b> — гистограмма: сколько в какой день\n"
+    "• <b>Сожжено</b> 💸 — сколько денег и времени ушло «в дым»\n"
+    "• <b>Интервалы</b> ⏱ — как давно не куришь, самый длинный перерыв\n"
+    "• <b>Тренд</b> 📉 — эта неделя против прошлой (±%)\n"
     "• <b>Статистика</b> — сводка цифрами\n"
-    "• <b>Рейтинг</b> — все участники и % от отметки в 100000\n"
+    "• <b>Рейтинг</b> — у кого спокойнее за неделю (меньше — выше)\n"
     "• <b>Изменить записи</b> — выбрать запись и исправить/удалить\n"
+    "• <b>Настройки</b> ⚙️ — цена и размер пачки (для подсчёта денег)\n"
     "• <b>Сменить имя</b> — как тебя показывать в рейтинге\n\n"
     "📷 После перекура можешь прислать фото — оно сохранится и привяжется "
     "к последней записи."
 )
+
+
+# ── Вспомогательные функции ──────────────────────────────────────
+def week_bounds(offset: int = 0) -> tuple[str, str]:
+    """Границы ISO-недели [понедельник, следующий понедельник) как YYYY-MM-DD.
+    offset=0 — текущая неделя, 1 — прошлая и т.д."""
+    today = date.today()
+    monday = today - timedelta(days=today.weekday()) - timedelta(weeks=offset)
+    return monday.isoformat(), (monday + timedelta(days=7)).isoformat()
+
+
+def fmt_money(value: float, currency: str) -> str:
+    s = f"{value:,.0f}" if abs(value - round(value)) < 0.005 else f"{value:,.1f}"
+    return s.replace(",", " ") + f" {currency}"
+
+
+def fmt_duration(td: timedelta) -> str:
+    total = int(td.total_seconds())
+    if total < 0:
+        total = 0
+    d, rem = divmod(total, 86400)
+    h, rem = divmod(rem, 3600)
+    m, _ = divmod(rem, 60)
+    if d:
+        return f"{d} дн {h} ч {m} мин"
+    if h:
+        return f"{h} ч {m} мин"
+    return f"{m} мин"
 
 
 # ── Регистрация / смена имени ────────────────────────────────────
@@ -365,16 +404,24 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     days = db.per_day(u.id)
     avg = round(total / n, 1) if n else 0
     best = max((v for _, v in days), default=0)
-    pct = total / GOAL * 100
-    await update.message.reply_html(
-        f"📊 <b>Статистика</b>\n"
-        f"Всего сигарет: <b>{total}</b> ({pct:.2f}% от 100000)\n"
-        f"Перекуров: <b>{n}</b>\n"
-        f"Дней с курением: <b>{len(days)}</b>\n"
-        f"Среднее за перекур: <b>{avg}</b>\n"
+    per_day_avg = round(total / len(days), 1) if days else 0
+
+    lines = [
+        "📊 <b>Статистика</b>",
+        f"Всего сигарет: <b>{total}</b>",
+        f"Перекуров: <b>{n}</b>",
+        f"Дней с курением: <b>{len(days)}</b>",
+        f"В среднем за день: <b>{per_day_avg}</b>",
         f"Больше всего за день: <b>{best}</b>",
-        reply_markup=MAIN_KB,
-    )
+    ]
+
+    s = db.get_settings(u.id)
+    if s["price_per_pack"]:
+        cost = s["price_per_pack"] / s["pack_size"]
+        lines.append(f"💸 Потрачено всего: <b>{fmt_money(total * cost, s['currency'])}</b>")
+    lines.append(f"⏱ Времени «в дым»: <b>{fmt_duration(timedelta(minutes=total * MIN_PER_CIG))}</b>")
+
+    await update.message.reply_html("\n".join(lines), reply_markup=MAIN_KB)
 
 
 async def chart_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -414,20 +461,192 @@ async def days_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_photo(img, caption="Сколько в какой день 📊")
 
 
+async def money_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    u = update.effective_user
+    s = db.get_settings(u.id)
+    total = db.total_count(u.id)
+    if total == 0:
+        await update.message.reply_text(
+            "Пока нет данных. Нажми «Записать перекур» 🚬", reply_markup=MAIN_KB
+        )
+        return
+    time_lost = fmt_duration(timedelta(minutes=total * MIN_PER_CIG))
+
+    if not s["price_per_pack"]:
+        await update.message.reply_html(
+            f"⏱ Времени «в дым»: <b>{time_lost}</b> ({total} шт по ~{MIN_PER_CIG} мин)\n\n"
+            "💸 Чтобы считать деньги, задай цену пачки в «⚙️ Настройки».",
+            reply_markup=MAIN_KB,
+        )
+        return
+
+    cost = s["price_per_pack"] / s["pack_size"]
+    days = db.per_day(u.id)
+    days_money = [(d, cnt * cost) for d, cnt in days]
+    img = charts.money_bar_chart(days_money, s["currency"], "Деньги «в дым» по дням")
+    await update.message.reply_photo(
+        img,
+        caption=(
+            f"💸 Всего сожжено: {fmt_money(total * cost, s['currency'])}\n"
+            f"🚬 Сигарет: {total} (≈{total / s['pack_size']:.1f} пачек)\n"
+            f"⏱ Времени: {time_lost}"
+        ),
+    )
+
+
+async def intervals_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    u = update.effective_user
+    sess = db.sessions(u.id)
+    if not sess:
+        await update.message.reply_text(
+            "Пока нет данных. Нажми «Записать перекур» 🚬", reply_markup=MAIN_KB
+        )
+        return
+    times = [datetime.fromisoformat(ts) for ts, _ in sess]
+    now = datetime.now()
+    since_last = now - times[-1]
+
+    lines = [
+        "⏱ <b>Интервалы</b>",
+        f"Не куришь уже: <b>{fmt_duration(since_last)}</b>",
+    ]
+    if len(times) >= 2:
+        diffs = [times[i + 1] - times[i] for i in range(len(times) - 1)]
+        longest = max(diffs)
+        avg = sum(diffs, timedelta()) / len(diffs)
+        lines.append(f"Самый длинный перерыв: <b>{fmt_duration(longest)}</b>")
+        lines.append(f"В среднем между перекурами: <b>{fmt_duration(avg)}</b>")
+    else:
+        lines.append("<i>Сделай ещё пару записей — покажу перерывы и средний интервал.</i>")
+    await update.message.reply_html("\n".join(lines), reply_markup=MAIN_KB)
+
+
+async def trend_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    u = update.effective_user
+    this = db.range_total(u.id, *week_bounds(0))
+    last = db.range_total(u.id, *week_bounds(1))
+
+    if this == 0 and last == 0:
+        await update.message.reply_text(
+            "Пока нет данных за последние две недели 🙂", reply_markup=MAIN_KB
+        )
+        return
+
+    if last == 0:
+        verdict = "📈 На прошлой неделе записей не было — не с чем сравнить."
+    else:
+        diff = this - last
+        pct = diff / last * 100
+        if diff < 0:
+            verdict = f"📉 Меньше на <b>{-pct:.0f}%</b> ({diff} шт). Так держать! 👏"
+        elif diff > 0:
+            verdict = f"📈 Больше на <b>{pct:.0f}%</b> (+{diff} шт)."
+        else:
+            verdict = "➖ Столько же, что и на прошлой неделе."
+
+    await update.message.reply_html(
+        f"📊 <b>Тренд по неделям</b>\n"
+        f"Эта неделя: <b>{this}</b> сигарет\n"
+        f"Прошлая неделя: <b>{last}</b> сигарет\n\n{verdict}",
+        reply_markup=MAIN_KB,
+    )
+
+
 async def top_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    board = db.leaderboard()
+    board = db.leaderboard_week(*week_bounds(0))
     if not board:
         await update.message.reply_text(
             "Пока никто ничего не записал 🙂", reply_markup=MAIN_KB
         )
         return
     medals = ["🥇", "🥈", "🥉"]
-    lines = ["🏆 <b>Рейтинг участников</b>", "<i>отметка — 100 000 сигарет</i>", ""]
-    for i, (name, total) in enumerate(board):
+    lines = [
+        "🏆 <b>Рейтинг за эту неделю</b>",
+        "<i>у кого спокойнее (меньше — выше)</i>",
+        "",
+    ]
+    for i, (name, week) in enumerate(board):
         mark = medals[i] if i < 3 else f"{i + 1}."
-        pct = total / GOAL * 100
-        lines.append(f"{mark} <b>{name}</b> — {total} ({pct:.2f}% от 100000)")
+        lines.append(f"{mark} <b>{name}</b> — {week} за неделю")
     await update.message.reply_html("\n".join(lines), reply_markup=MAIN_KB)
+
+
+# ── Настройки стоимости (диалог) ─────────────────────────────────
+async def settings_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    u = update.effective_user
+    db.upsert_user(u.id, u.username, u.first_name)
+    s = db.get_settings(u.id)
+    cur = s["currency"]
+    now = (
+        f"Сейчас: пачка {fmt_money(s['price_per_pack'], cur)} на {s['pack_size']} шт."
+        if s["price_per_pack"]
+        else "Сейчас цена пачки не задана."
+    )
+    await update.message.reply_html(
+        f"⚙️ <b>Настройки стоимости</b>\n{now}\n\nВыбери валюту:",
+        reply_markup=CUR_KB,
+    )
+    return SET_CUR
+
+
+async def settings_cur(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = (update.message.text or "").strip()
+    if text == BTN_CANCEL:
+        return await cancel(update, context)
+    if len(text) > 8:
+        await update.message.reply_text("Слишком длинно. Выбери валюту кнопкой.", reply_markup=CUR_KB)
+        return SET_CUR
+    context.user_data["s_cur"] = text
+    await update.message.reply_html(
+        f"Сколько стоит пачка? Напиши число (в {text}):", reply_markup=CANCEL_KB
+    )
+    return SET_PRICE
+
+
+async def settings_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = (update.message.text or "").strip().replace(",", ".")
+    if text == BTN_CANCEL.replace(",", "."):
+        return await cancel(update, context)
+    try:
+        price = float(text)
+    except ValueError:
+        await update.message.reply_text("Это не число. Напиши цену пачки, например 75.", reply_markup=CANCEL_KB)
+        return SET_PRICE
+    if price <= 0 or price > 100000:
+        await update.message.reply_text("Введи разумную цену.", reply_markup=CANCEL_KB)
+        return SET_PRICE
+    context.user_data["s_price"] = price
+    await update.message.reply_html(
+        "Сколько сигарет в пачке? (обычно 20)", reply_markup=PACK_KB
+    )
+    return SET_PACK
+
+
+async def settings_pack(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    u = update.effective_user
+    text = (update.message.text or "").strip()
+    if text == BTN_CANCEL:
+        return await cancel(update, context)
+    try:
+        pack = int(text)
+    except ValueError:
+        await update.message.reply_text("Напиши число, например 20.", reply_markup=PACK_KB)
+        return SET_PACK
+    if pack < 1 or pack > 100:
+        await update.message.reply_text("Введи число от 1 до 100.", reply_markup=PACK_KB)
+        return SET_PACK
+
+    cur = context.user_data.pop("s_cur", "грн")
+    price = context.user_data.pop("s_price", 0)
+    db.set_settings(u.id, cur, price, pack)
+    cost = price / pack
+    await update.message.reply_html(
+        f"✅ Готово! Пачка {fmt_money(price, cur)} на {pack} шт.\n"
+        f"Одна сигарета ≈ <b>{fmt_money(cost, cur)}</b>.\n"
+        "Теперь «💸 Сожжено» и статистика считают деньги.",
+        reply_markup=MAIN_KB,
+    )
+    return ConversationHandler.END
 
 
 async def photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -505,9 +724,24 @@ def main() -> None:
         fallbacks=[CommandHandler("cancel", cancel), MessageHandler(_btn(BTN_CANCEL), cancel)],
     )
 
+    # Настройки стоимости (валюта → цена → размер пачки)
+    settings_conv = ConversationHandler(
+        entry_points=[
+            CommandHandler("settings", settings_entry),
+            MessageHandler(_btn(BTN_SETTINGS), settings_entry),
+        ],
+        states={
+            SET_CUR: [MessageHandler(filters.TEXT & ~filters.COMMAND, settings_cur)],
+            SET_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, settings_price)],
+            SET_PACK: [MessageHandler(filters.TEXT & ~filters.COMMAND, settings_pack)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel), MessageHandler(_btn(BTN_CANCEL), cancel)],
+    )
+
     app.add_handler(name_conv)
     app.add_handler(add_conv)
     app.add_handler(edit_conv)
+    app.add_handler(settings_conv)
 
     # Информационные кнопки + команды-дубли
     app.add_handler(CommandHandler("help", help_cmd))
@@ -518,9 +752,14 @@ def main() -> None:
     app.add_handler(CommandHandler("chart", chart_cmd))
     app.add_handler(MessageHandler(_btn(BTN_CHART), chart_cmd))
     app.add_handler(CommandHandler("total", total_cmd))
-    app.add_handler(MessageHandler(_btn(BTN_TOTAL), total_cmd))
     app.add_handler(CommandHandler("days", days_cmd))
     app.add_handler(MessageHandler(_btn(BTN_DAYS), days_cmd))
+    app.add_handler(CommandHandler("money", money_cmd))
+    app.add_handler(MessageHandler(_btn(BTN_MONEY), money_cmd))
+    app.add_handler(CommandHandler("intervals", intervals_cmd))
+    app.add_handler(MessageHandler(_btn(BTN_INTERVALS), intervals_cmd))
+    app.add_handler(CommandHandler("trend", trend_cmd))
+    app.add_handler(MessageHandler(_btn(BTN_TREND), trend_cmd))
     app.add_handler(CommandHandler("top", top_cmd))
     app.add_handler(MessageHandler(_btn(BTN_TOP), top_cmd))
     app.add_handler(MessageHandler(filters.PHOTO, photo))

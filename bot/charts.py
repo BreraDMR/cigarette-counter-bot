@@ -119,3 +119,31 @@ def days_bar_chart(days: list[tuple[str, int]], title: str) -> io.BytesIO:
     ax.margins(y=0.18)
     fig.autofmt_xdate(rotation=30)
     return _finish(fig)
+
+
+def money_bar_chart(days: list[tuple[str, float]], currency: str, title: str) -> io.BytesIO:
+    """Гистограмма потраченных денег по дням."""
+    labels = [datetime.fromisoformat(d).strftime("%d.%m") for d, _ in days]
+    values = [v for _, v in days]
+
+    def fmt(v: float) -> str:
+        return f"{v:.0f}" if abs(v - round(v)) < 0.05 else f"{v:.1f}"
+
+    fig, ax = plt.subplots(figsize=(9, 5))
+    bars = ax.bar(labels, values, color=ACCENT2, width=0.62, edgecolor="white")
+    if values:
+        worst = max(range(len(values)), key=lambda i: values[i])
+        bars[worst].set_color("#C0392B")
+
+    for rect, v in zip(bars, values):
+        ax.annotate(fmt(v), (rect.get_x() + rect.get_width() / 2, rect.get_height()),
+                    textcoords="offset points", xytext=(0, 5), ha="center",
+                    fontsize=9, fontweight="bold")
+
+    ax.set_title(title, fontsize=15, fontweight="bold", pad=14)
+    ax.set_ylabel(f"Потрачено, {currency}")
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.grid(axis="x", visible=False)
+    ax.margins(y=0.18)
+    fig.autofmt_xdate(rotation=30)
+    return _finish(fig)

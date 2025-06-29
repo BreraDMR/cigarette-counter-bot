@@ -49,10 +49,10 @@ KINDS = {
 
 # ── Кнопки главного меню (подписи) ───────────────────────────────
 BTN_ADD = "🚬 Перекур +1"
+BTN_DELLAST = "🗑 Удалить последний"
 BTN_STATS = "📊 Статистика"
 BTN_EXPENSES = "💸 Расходы"
 BTN_TOP = "🏆 Рейтинг"
-BTN_EDIT = "✏️ Записи"
 BTN_SETTINGS = "⚙️ Настройки"
 BTN_HELP = "ℹ️ Помощь"
 BTN_CANCEL = "❌ Отмена"
@@ -61,12 +61,16 @@ BTN_SKIP = "⏭ Пропустить"
 MAIN_KB = ReplyKeyboardMarkup(
     [
         [BTN_ADD],
+        [BTN_DELLAST],
         [BTN_STATS, BTN_EXPENSES],
-        [BTN_TOP, BTN_EDIT],
-        [BTN_SETTINGS, BTN_HELP],
+        [BTN_TOP, BTN_SETTINGS],
+        [BTN_HELP],
     ],
     resize_keyboard=True,
 )
+
+# Кнопки главного меню одним фильтром — чтобы выйти из любого «залипшего» диалога.
+_MAIN_BUTTONS = [BTN_ADD, BTN_DELLAST, BTN_STATS, BTN_EXPENSES, BTN_TOP, BTN_SETTINGS, BTN_HELP]
 CANCEL_KB = ReplyKeyboardMarkup([[BTN_CANCEL]], resize_keyboard=True)
 SKIP_KB = ReplyKeyboardMarkup([[BTN_SKIP]], resize_keyboard=True)
 
@@ -90,14 +94,14 @@ HELP = (
     "🚬 <b>Счётчик сигарет</b>\n\n"
     "Пользуйся кнопками внизу 👇\n\n"
     "• <b>🚬 Перекур +1</b> — записывает одну сигарету. Один перекур = одна сигарета.\n"
+    "• <b>🗑 Удалить последний</b> — быстро убрать последний перекур (если нажал зря).\n"
     "• <b>📊 Статистика</b> — всё в одном меню: сводка, по часам суток "
     "(когда тянет чаще), по дням недели, динамика, интервалы, тренд.\n"
     "• <b>💸 Расходы</b> — учёт расходников: табак, бумага, фильтры или пачка "
     "сигарет. Открыл упаковку — записал цену; кончилась — отметил. Бот посчитает, "
     "сколько денег ушло «в дым» и куда именно.\n"
     "• <b>🏆 Рейтинг</b> — у кого спокойнее за неделю (меньше — выше).\n"
-    "• <b>✏️ Записи</b> — поправить или удалить запись.\n"
-    "• <b>⚙️ Настройки</b> — сменить имя и валюту.\n\n"
+    "• <b>⚙️ Настройки</b> — сменить имя, валюту и поправить/удалить записи.\n\n"
     "📷 После перекура можешь прислать фото — оно привяжется к последней записи."
 )
 
@@ -231,6 +235,25 @@ async def add_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"✅ Перекур записан в {now} 🚬\n"
         f"Сегодня: <b>{today}</b>  ·  Всего: <b>{total}</b>\n"
         f"📷 Можешь прислать фото к этому перекуру.",
+        reply_markup=MAIN_KB,
+    )
+
+
+# ── Быстрое удаление последнего перекура ─────────────────────────
+async def dellast_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    u = update.effective_user
+    rows = db.recent_sets(u.id, limit=1)
+    if not rows:
+        await update.message.reply_text(
+            "Нет записей — удалять нечего 🤷", reply_markup=MAIN_KB
+        )
+        return
+    set_id, ts, _ = rows[0]
+    when = ts.replace("T", " ")[5:16]  # MM-DD HH:MM
+    db.delete_set(set_id)
+    await update.message.reply_html(
+        f"🗑 Удалил последний перекур (№{set_id} · {when}).\n"
+        f"Сегодня: <b>{db.today_count(u.id)}</b>  ·  Всего: <b>{db.total_count(u.id)}</b>",
         reply_markup=MAIN_KB,
     )
 
@@ -509,6 +532,7 @@ def settings_menu_kb() -> InlineKeyboardMarkup:
         [
             [InlineKeyboardButton("🙍 Сменить имя", callback_data="se:name")],
             [InlineKeyboardButton("💱 Валюта", callback_data="se:cur")],
+            [InlineKeyboardButton("✏️ Изменить/удалить записи", callback_data="se:edit")],
         ]
     )
 
@@ -573,11 +597,10 @@ async def top_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ── Редактирование записей ───────────────────────────────────────
-async def edit_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    u = update.effective_user
-    rows = db.recent_sets(u.id, limit=10)
+async def _show_edit_list(message, user_id: int):
+    rows = db.recent_sets(user_id, limit=10)
     if not rows:
-        await update.message.reply_text(
+        await message.reply_text(
             "Пока нет записей. Сначала запиши перекур 🚬", reply_markup=MAIN_KB
         )
         return ConversationHandler.END
@@ -587,11 +610,21 @@ async def edit_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
         when = ts.replace("T", " ")[5:16]  # MM-DD HH:MM
         label = f"№{set_id} · {when}" + (f" · {count} шт" if count != 1 else "")
         buttons.append([InlineKeyboardButton(label, callback_data=f"pick:{set_id}:{count}")])
-    await update.message.reply_text(
+    await message.reply_text(
         "Какую запись изменить? Выбери её:", reply_markup=InlineKeyboardMarkup(buttons)
     )
-    await update.message.reply_text("…или нажми «Отмена».", reply_markup=CANCEL_KB)
+    await message.reply_text("…или нажми «Отмена».", reply_markup=CANCEL_KB)
     return EDIT_VALUE
+
+
+async def edit_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    return await _show_edit_list(update.message, update.effective_user.id)
+
+
+async def edit_from_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    return await _show_edit_list(query.message, query.from_user.id)
 
 
 async def edit_picked(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -718,6 +751,26 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
+async def conv_escape(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Нажата кнопка главного меню посреди диалога — выходим из диалога
+    и сразу выполняем то, что человек хотел (чтобы бот не «залипал»)."""
+    context.user_data.pop("edit_id", None)
+    context.user_data.pop("ex_kind", None)
+    text = (update.message.text or "").strip()
+    handler = {
+        BTN_ADD: add_cmd,
+        BTN_DELLAST: dellast_cmd,
+        BTN_STATS: stats_menu,
+        BTN_EXPENSES: expenses_menu,
+        BTN_TOP: top_cmd,
+        BTN_SETTINGS: settings_menu,
+        BTN_HELP: help_cmd,
+    }.get(text)
+    if handler:
+        await handler(update, context)
+    return ConversationHandler.END
+
+
 # ── Прочее ───────────────────────────────────────────────────────
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_html(HELP, reply_markup=MAIN_KB)
@@ -754,6 +807,13 @@ def _btn(label: str) -> filters.BaseFilter:
     return filters.Regex(f"^{re.escape(label)}$")
 
 
+def _main_buttons_filter() -> filters.BaseFilter:
+    """Фильтр на любую кнопку главного меню — для аварийного выхода из диалогов."""
+    import re
+    pattern = "|".join(re.escape(b) for b in _MAIN_BUTTONS)
+    return filters.Regex(f"^({pattern})$")
+
+
 def main() -> None:
     token = os.environ.get("BOT_TOKEN")
     if not token:
@@ -764,6 +824,20 @@ def main() -> None:
 
     app = Application.builder().token(token).build()
 
+    # Аварийный выход из любого диалога по кнопке главного меню
+    escape_fb = MessageHandler(_main_buttons_filter(), conv_escape)
+    common_fb = [
+        CommandHandler("cancel", cancel),
+        MessageHandler(_btn(BTN_CANCEL), cancel),
+        escape_fb,
+    ]
+    # «Свободный» текст внутри диалога: всё, кроме кнопок меню и «Отмена»,
+    # чтобы такие нажатия уходили в fallbacks (отмена / аварийный выход).
+    free_text = (
+        filters.TEXT & ~filters.COMMAND
+        & ~_main_buttons_filter() & ~_btn(BTN_CANCEL)
+    )
+
     # Регистрация / смена имени (в т.ч. из настроек)
     name_conv = ConversationHandler(
         entry_points=[
@@ -771,8 +845,9 @@ def main() -> None:
             CommandHandler("setname", setname_entry),
             CallbackQueryHandler(setname_from_cb, pattern=r"^se:name$"),
         ],
-        states={NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, name_received)]},
-        fallbacks=[CommandHandler("cancel", cancel), MessageHandler(_btn(BTN_CANCEL), cancel)],
+        states={NAME: [MessageHandler(free_text, name_received)]},
+        fallbacks=common_fb,
+        allow_reentry=True,
     )
 
     # Открытие упаковки расходника (тип → цена)
@@ -781,18 +856,19 @@ def main() -> None:
         states={
             EX_PRICE: [
                 CallbackQueryHandler(expenses_new_kind, pattern=r"^exnew:"),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, expenses_new_price),
+                MessageHandler(free_text, expenses_new_price),
             ],
         },
-        fallbacks=[CommandHandler("cancel", cancel), MessageHandler(_btn(BTN_CANCEL), cancel)],
+        fallbacks=common_fb,
         per_message=False,
+        allow_reentry=True,
     )
 
-    # Редактирование
+    # Редактирование (вход — из меню «⚙️ Настройки» или командой /edit)
     edit_conv = ConversationHandler(
         entry_points=[
             CommandHandler("edit", edit_entry),
-            MessageHandler(_btn(BTN_EDIT), edit_entry),
+            CallbackQueryHandler(edit_from_settings, pattern=r"^se:edit$"),
         ],
         states={
             EDIT_VALUE: [
@@ -801,19 +877,22 @@ def main() -> None:
                 CallbackQueryHandler(edit_delete_ask, pattern=r"^del:"),
                 CallbackQueryHandler(edit_delete_ok, pattern=r"^delok:"),
                 CallbackQueryHandler(edit_delete_no, pattern=r"^delno$"),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, edit_value),
+                MessageHandler(free_text, edit_value),
             ],
         },
-        fallbacks=[CommandHandler("cancel", cancel), MessageHandler(_btn(BTN_CANCEL), cancel)],
+        fallbacks=common_fb,
+        allow_reentry=True,
     )
 
     app.add_handler(name_conv)
     app.add_handler(expenses_conv)
     app.add_handler(edit_conv)
 
-    # Перекур
+    # Перекур + быстрое удаление последнего
     app.add_handler(CommandHandler("add", add_cmd))
     app.add_handler(MessageHandler(_btn(BTN_ADD), add_cmd))
+    app.add_handler(CommandHandler("dellast", dellast_cmd))
+    app.add_handler(MessageHandler(_btn(BTN_DELLAST), dellast_cmd))
 
     # Статистика
     app.add_handler(CommandHandler("stats", stats_menu))

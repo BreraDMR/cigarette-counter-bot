@@ -50,6 +50,22 @@ def init_db() -> None:
             );
 
             CREATE INDEX IF NOT EXISTS idx_sets_user ON sets(user_id, created_at);
+
+            -- Расходники: пачка табака/бумаги/фильтров/сигарет.
+            -- Пользователь «открывает» упаковку (пишет цену), потом «закрывает»,
+            -- когда она закончилась. closed_at = NULL → ещё в ходу.
+            CREATE TABLE IF NOT EXISTS consumables (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id     INTEGER NOT NULL,
+                kind        TEXT NOT NULL,
+                price       REAL NOT NULL,
+                currency    TEXT,
+                opened_at   TEXT NOT NULL,
+                closed_at   TEXT,
+                FOREIGN KEY (user_id) REFERENCES users(user_id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_cons_user ON consumables(user_id, opened_at);
             """
         )
         # Миграции для старых БД (добавляем недостающие колонки)
@@ -178,6 +194,40 @@ def sessions(user_id: int) -> list[tuple[str, int]]:
         return [(r["created_at"], int(r["count"])) for r in rows]
 
 
+def by_hour(user_id: int) -> list[int]:
+    """Распределение сигарет по часам суток: список из 24 чисел (индекс = час)."""
+    out = [0] * 24
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT CAST(substr(created_at, 12, 2) AS INTEGER) AS h, "
+            "SUM(count) AS total FROM sets WHERE user_id = ? GROUP BY h",
+            (user_id,),
+        ).fetchall()
+    for r in rows:
+        h = r["h"]
+        if h is not None and 0 <= h < 24:
+            out[h] = int(r["total"])
+    return out
+
+
+def by_weekday(user_id: int) -> list[int]:
+    """Распределение сигарет по дням недели: 7 чисел, индекс 0=Пн … 6=Вс."""
+    out = [0] * 7
+    with _connect() as conn:
+        # strftime('%w'): 0=воскресенье … 6=суббота
+        rows = conn.execute(
+            "SELECT CAST(strftime('%w', created_at) AS INTEGER) AS w, "
+            "SUM(count) AS total FROM sets WHERE user_id = ? GROUP BY w",
+            (user_id,),
+        ).fetchall()
+    for r in rows:
+        w = r["w"]
+        if w is not None:
+            idx = (w - 1) % 7  # сдвигаем так, чтобы 0=Пн … 6=Вс
+            out[idx] = int(r["total"])
+    return out
+
+
 def leaderboard() -> list[tuple[str, int]]:
     """Рейтинг всех пользователей: [(имя, всего_сигарет), ...] по убыванию."""
     with _connect() as conn:
@@ -243,6 +293,11 @@ def get_settings(user_id: int) -> dict:
     }
 
 
+def set_currency(user_id: int, currency: str) -> None:
+    with _connect() as conn:
+        conn.execute("UPDATE users SET currency = ? WHERE user_id = ?", (currency, user_id))
+
+
 def set_settings(user_id: int, currency: str, price_per_pack: float, pack_size: int) -> None:
     with _connect() as conn:
         conn.execute(
@@ -261,6 +316,81 @@ def range_total(user_id: int, start: str, end: str) -> int:
             (user_id, start, end),
         ).fetchone()
         return int(row["t"])
+
+
+# ── Расходники (табак / бумага / фильтры / сигареты) ──────────────
+def open_consumable(user_id: int, kind: str, price: float, currency: str) -> int:
+    """Открывает новую упаковку. Если упаковка этого же типа была ещё открыта —
+    автоматически закрывает её (значит «старая кончилась, новая началась»)."""
+    now = datetime.now().isoformat(timespec="seconds")
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE consumables SET closed_at = ? "
+            "WHERE user_id = ? AND kind = ? AND closed_at IS NULL",
+            (now, user_id, kind),
+        )
+        cur = conn.execute(
+            "INSERT INTO consumables (user_id, kind, price, currency, opened_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (user_id, kind, price, currency, now),
+        )
+        return int(cur.lastrowid)
+
+
+def close_consumable(user_id: int, kind: str) -> bool:
+    """Отмечает открытую упаковку этого типа как закончившуюся.
+    Возвращает True, если было что закрывать."""
+    now = datetime.now().isoformat(timespec="seconds")
+    with _connect() as conn:
+        cur = conn.execute(
+            "UPDATE consumables SET closed_at = ? "
+            "WHERE user_id = ? AND kind = ? AND closed_at IS NULL",
+            (now, user_id, kind),
+        )
+        return cur.rowcount > 0
+
+
+def open_consumables(user_id: int) -> list[tuple[str, float, str, str]]:
+    """Сейчас открытые упаковки: [(kind, price, currency, opened_at), ...]."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT kind, price, currency, opened_at FROM consumables "
+            "WHERE user_id = ? AND closed_at IS NULL ORDER BY kind",
+            (user_id,),
+        ).fetchall()
+        return [(r["kind"], float(r["price"]), r["currency"], r["opened_at"]) for r in rows]
+
+
+def total_spent(user_id: int) -> float:
+    """Сумма всех купленных упаковок (открытых и закрытых)."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT COALESCE(SUM(price), 0) AS t FROM consumables WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+        return float(row["t"])
+
+
+def spent_by_kind(user_id: int) -> list[tuple[str, float, int]]:
+    """Траты по типам: [(kind, сумма, кол-во упаковок), ...] по убыванию суммы."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT kind, SUM(price) AS total, COUNT(*) AS n FROM consumables "
+            "WHERE user_id = ? GROUP BY kind ORDER BY total DESC",
+            (user_id,),
+        ).fetchall()
+        return [(r["kind"], float(r["total"]), int(r["n"])) for r in rows]
+
+
+def spent_per_day(user_id: int) -> list[tuple[str, float]]:
+    """Траты по дням покупки упаковок: [(YYYY-MM-DD, сумма), ...]."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT substr(opened_at, 1, 10) AS day, SUM(price) AS total "
+            "FROM consumables WHERE user_id = ? GROUP BY day ORDER BY day",
+            (user_id,),
+        ).fetchall()
+        return [(r["day"], float(r["total"])) for r in rows]
 
 
 def leaderboard_week(start: str, end: str) -> list[tuple[str, int]]:

@@ -118,7 +118,8 @@ docker compose logs -f
 ```
 
 The database and photos are stored in the local `./data` folder (mounted to
-`/data` inside the container) and survive restarts.
+`/data` inside the container) and survive restarts. The timezone for smoke-break
+timestamps is set via `TZ` (default `Europe/Prague`) in `docker-compose.yml` / `.env`.
 
 ### 3. Locally without Docker
 

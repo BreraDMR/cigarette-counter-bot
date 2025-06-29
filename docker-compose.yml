@@ -5,5 +5,8 @@ services:
     container_name: cigarette-counter-bot
     restart: unless-stopped
     env_file: .env
+    environment:
+      # Часовой пояс для времени перекуров. Поменяй здесь, если переедешь.
+      TZ: ${TZ:-Europe/Prague}
     volumes:
       - ./data:/data

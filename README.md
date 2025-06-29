@@ -34,7 +34,9 @@ higher**), and attach a photo to a smoke break. All data lives in SQLite, kept
   The **Expenses** view tracks real **consumables**: tobacco, rolling paper,
   filters, or a ready-made pack. You open a unit and record its price; when it runs
   out you mark it done. The bot shows total spent, the price of a single cigarette,
-  and a "where the money went" breakdown by consumable.
+  and a "where the money went" breakdown by consumable. Prices can be in **EUR,
+  UAH or CZK** — amounts are **auto-converted** to your chosen currency at an
+  approximate live rate (cached, with an offline fallback).
 - **Willpower alone fades.** A reverse **leaderboard** (`/top`) ranks participants
   by cigarettes this week — **fewer is higher** — so the social pressure pushes you
   the right way instead of rewarding more.
@@ -65,7 +67,8 @@ higher**), and attach a photo to a smoke break. All data lives in SQLite, kept
 - **🏆 Reverse leaderboard** (`/top`) — "who's calmest" this week, **fewer is higher**.
 - **✏️ Entries** — the bot shows recent entries as buttons; pick one, then
   "✏️ Change number" or "🗑 Delete" (with confirmation). You can only edit your own.
-- **⚙️ Settings** — change your name and currency.
+- **⚙️ Settings** — change your name and currency (EUR / UAH / CZK, with
+  auto-conversion of past expenses at an approximate rate).
 - **Photos (optional)** — send a photo after a break and it's saved locally
   (`data/photos/<user_id>/`) and attached to the last entry.
 - **Multi-user** — data isolated per `user_id`.

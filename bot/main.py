@@ -29,7 +29,7 @@ from telegram.ext import (
     filters,
 )
 
-from . import charts, db
+from . import charts, db, rates
 
 logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s %(message)s", level=logging.INFO
@@ -131,6 +131,24 @@ def fmt_duration(td: timedelta) -> str:
 
 def user_currency(user_id: int) -> str:
     return db.get_settings(user_id)["currency"]
+
+
+def total_spent_converted(user_id: int) -> float:
+    """Все траты, сконвертированные в текущую валюту пользователя."""
+    cur = user_currency(user_id)
+    return sum(
+        rates.convert(price, item_cur or cur, cur)
+        for _, price, item_cur in db.all_consumables(user_id)
+    )
+
+
+def spent_by_kind_converted(user_id: int) -> list[tuple[str, float]]:
+    """Траты по типам в текущей валюте: [(kind, сумма), ...] по убыванию."""
+    cur = user_currency(user_id)
+    agg: dict[str, float] = {}
+    for kind, price, item_cur in db.all_consumables(user_id):
+        agg[kind] = agg.get(kind, 0.0) + rates.convert(price, item_cur or cur, cur)
+    return sorted(agg.items(), key=lambda kv: kv[1], reverse=True)
 
 
 # ── Регистрация / смена имени ────────────────────────────────────
@@ -278,7 +296,7 @@ async def _send_summary(msg, user_id: int):
     if peak_h is not None:
         lines.append(f"Чаще всего куришь около <b>{peak_h:02d}:00</b>")
 
-    spent = db.total_spent(user_id)
+    spent = total_spent_converted(user_id)
     cur = user_currency(user_id)
     if spent > 0:
         lines.append(f"💸 Потрачено на расходники: <b>{fmt_money(spent, cur)}</b>")
@@ -346,14 +364,18 @@ def expenses_menu_kb() -> InlineKeyboardMarkup:
 
 def _expenses_text(user_id: int) -> str:
     cur = user_currency(user_id)
-    spent = db.total_spent(user_id)
+    spent = total_spent_converted(user_id)
     total_cigs = db.total_count(user_id)
     lines = ["💸 <b>Расходы</b>"]
     open_items = db.open_consumables(user_id)
     if open_items:
         lines.append("\nСейчас открыто:")
         for kind, price, c, _ in open_items:
-            lines.append(f"• {KINDS.get(kind, kind)} — {fmt_money(price, c or cur)}")
+            shown = fmt_money(rates.convert(price, c or cur, cur), cur)
+            # если покупал в другой валюте — подскажем исходную цену
+            if c and c != cur:
+                shown += f" <i>({fmt_money(price, c)})</i>"
+            lines.append(f"• {KINDS.get(kind, kind)} — {shown}")
     else:
         lines.append("\n<i>Открытых упаковок нет.</i>")
     if spent > 0:
@@ -396,16 +418,16 @@ async def expenses_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Какая упаковка закончилась?", reply_markup=_kind_kb("exclose", kinds)
         )
     elif action == "chart":
-        by_kind = db.spent_by_kind(u.id)
+        by_kind = spent_by_kind_converted(u.id)
         if not by_kind:
             await query.message.reply_text(
                 "Пока нет трат. Открой упаковку и запиши цену 💸", reply_markup=MAIN_KB
             )
             return
         cur = user_currency(u.id)
-        items = [(KINDS.get(k, k), total) for k, total, _ in by_kind]
+        items = [(KINDS.get(k, k), total) for k, total in by_kind]
         img = charts.spend_by_kind_chart(items, cur)
-        await query.message.reply_photo(img, caption="💸 Куда ушли деньги")
+        await query.message.reply_photo(img, caption="💸 Куда ушли деньги (в одной валюте)")
 
 
 async def expenses_close_kind(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -507,15 +529,19 @@ async def settings_currency_menu(update: Update, context: ContextTypes.DEFAULT_T
     await query.answer()
     kb = InlineKeyboardMarkup(
         [
-            [InlineKeyboardButton("грн", callback_data="secur:грн"),
-             InlineKeyboardButton("₽", callback_data="secur:₽")],
-            [InlineKeyboardButton("$", callback_data="secur:$"),
-             InlineKeyboardButton("€", callback_data="secur:€")],
-            [InlineKeyboardButton("zł", callback_data="secur:zł"),
-             InlineKeyboardButton("₸", callback_data="secur:₸")],
+            [InlineKeyboardButton("🇪🇺 € евро", callback_data="secur:€")],
+            [InlineKeyboardButton("🇺🇦 ₴ гривна", callback_data="secur:грн")],
+            [InlineKeyboardButton("🇨🇿 Kč крона", callback_data="secur:Kč")],
         ]
     )
-    await query.edit_message_text("Выбери валюту:", reply_markup=kb)
+    r = rates.get_rates()
+    note = (
+        f"\n\n<i>Примерный курс: 1 € ≈ {r.get('UAH', 0):.1f} грн ≈ "
+        f"{r.get('CZK', 0):.1f} Kč. Суммы из других валют пересчитаю автоматически.</i>"
+    )
+    await query.edit_message_text(
+        "Выбери валюту:" + note, parse_mode="HTML", reply_markup=kb
+    )
 
 
 async def settings_currency_set(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -524,7 +550,7 @@ async def settings_currency_set(update: Update, context: ContextTypes.DEFAULT_TY
     u = query.from_user
     cur = query.data.split(":", 1)[1]
     db.set_currency(u.id, cur)
-    await query.edit_message_text(f"✅ Валюта: {cur}")
+    await query.edit_message_text(f"✅ Валюта: {cur} — суммы расходов теперь показываю в ней.")
     await query.message.reply_text("Главное меню 👇", reply_markup=MAIN_KB)
 
 

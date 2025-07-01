@@ -99,8 +99,9 @@ def upsert_user(user_id: int, username: Optional[str], first_name: Optional[str]
     with _connect() as conn:
         conn.execute(
             """
-            INSERT INTO users (user_id, username, first_name, display_name, created_at, language)
-            VALUES (?, ?, ?, ?, ?, 'en')
+            INSERT INTO users (user_id, username, first_name, display_name, created_at,
+                               language, currency)
+            VALUES (?, ?, ?, ?, ?, 'en', '€')
             ON CONFLICT(user_id) DO UPDATE SET
                 username = excluded.username,
                 first_name = excluded.first_name

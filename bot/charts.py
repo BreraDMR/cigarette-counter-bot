@@ -15,6 +15,8 @@ import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
 from matplotlib.ticker import MaxNLocator
 
+from . import i18n
+
 # Палитра в духе Excel
 ACCENT = "#2E75B6"   # синий
 ACCENT2 = "#ED7D31"  # оранжевый
@@ -47,7 +49,7 @@ def _finish(fig) -> io.BytesIO:
     return buf
 
 
-def line_chart(sessions: list[tuple[str, int]], title: str) -> io.BytesIO:
+def line_chart(sessions: list[tuple[str, int]], title: str, lang: str = "ru") -> io.BytesIO:
     """Линейный график сигарет по перекурам (с заливкой области)."""
     x = [datetime.fromisoformat(ts) for ts, _ in sessions]
     y = [c for _, c in sessions]
@@ -62,7 +64,7 @@ def line_chart(sessions: list[tuple[str, int]], title: str) -> io.BytesIO:
                     xytext=(0, 8), ha="center", fontsize=9, color=ACCENT)
 
     ax.set_title(title, fontsize=15, fontweight="bold", pad=14)
-    ax.set_ylabel("Сигарет за перекур")
+    ax.set_ylabel(i18n.t(lang, "chart_line_ylabel"))
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%d.%m %H:%M"))
     ax.yaxis.set_major_locator(MaxNLocator(integer=True))
     fig.autofmt_xdate(rotation=30)
@@ -71,7 +73,7 @@ def line_chart(sessions: list[tuple[str, int]], title: str) -> io.BytesIO:
     return _finish(fig)
 
 
-def cumulative_chart(sessions: list[tuple[str, int]], total: int) -> io.BytesIO:
+def cumulative_chart(sessions: list[tuple[str, int]], total: int, lang: str = "ru") -> io.BytesIO:
     """Накопительный график: сколько всего выкурил к каждому моменту."""
     x = [datetime.fromisoformat(ts) for ts, _ in sessions]
     cum, running = [], 0
@@ -83,8 +85,8 @@ def cumulative_chart(sessions: list[tuple[str, int]], total: int) -> io.BytesIO:
     ax.plot(x, cum, color=ACCENT2, linewidth=2.6)
     ax.fill_between(x, cum, color=ACCENT2, alpha=0.18)
 
-    ax.set_title(f"Всего сигарет: {total}", fontsize=16, fontweight="bold", pad=14)
-    ax.set_ylabel("Накопительно")
+    ax.set_title(i18n.t(lang, "chart_cumul_title", total=total), fontsize=16, fontweight="bold", pad=14)
+    ax.set_ylabel(i18n.t(lang, "chart_cumul_ylabel"))
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%d.%m"))
     ax.yaxis.set_major_locator(MaxNLocator(integer=True))
     fig.autofmt_xdate(rotation=30)
@@ -93,7 +95,7 @@ def cumulative_chart(sessions: list[tuple[str, int]], total: int) -> io.BytesIO:
     return _finish(fig)
 
 
-def days_bar_chart(days: list[tuple[str, int]], title: str) -> io.BytesIO:
+def days_bar_chart(days: list[tuple[str, int]], title: str, lang: str = "ru") -> io.BytesIO:
     """Гистограмма (столбики) по дням: сколько сигарет в какой день."""
     labels = [datetime.fromisoformat(d).strftime("%d.%m") for d, _ in days]
     values = [v for _, v in days]
@@ -112,7 +114,7 @@ def days_bar_chart(days: list[tuple[str, int]], title: str) -> io.BytesIO:
                     fontsize=9, fontweight="bold")
 
     ax.set_title(title, fontsize=15, fontweight="bold", pad=14)
-    ax.set_ylabel("Сигарет за день")
+    ax.set_ylabel(i18n.t(lang, "chart_days_ylabel"))
     ax.yaxis.set_major_locator(MaxNLocator(integer=True))
     ax.spines[["top", "right"]].set_visible(False)
     ax.grid(axis="x", visible=False)
@@ -121,7 +123,7 @@ def days_bar_chart(days: list[tuple[str, int]], title: str) -> io.BytesIO:
     return _finish(fig)
 
 
-def hours_chart(by_hour: list[int]) -> io.BytesIO:
+def hours_chart(by_hour: list[int], lang: str = "ru") -> io.BytesIO:
     """Гистограмма «в какое время суток чаще куришь» (24 столбика, по часам)."""
     hours = list(range(24))
     values = list(by_hour)
@@ -132,14 +134,14 @@ def hours_chart(by_hour: list[int]) -> io.BytesIO:
     if any(values):
         peak = max(range(24), key=lambda i: values[i])
         bars[peak].set_color(ACCENT2)
-        ax.annotate(f"пик в {peak:02d}:00",
+        ax.annotate(i18n.t(lang, "chart_hours_peak", h=f"{peak:02d}"),
                     (peak, values[peak]), textcoords="offset points",
                     xytext=(0, 8), ha="center", fontsize=10,
                     fontweight="bold", color=ACCENT2)
 
-    ax.set_title("Когда ты куришь чаще всего", fontsize=15, fontweight="bold", pad=14)
-    ax.set_ylabel("Сигарет")
-    ax.set_xlabel("Час суток")
+    ax.set_title(i18n.t(lang, "chart_hours_title"), fontsize=15, fontweight="bold", pad=14)
+    ax.set_ylabel(i18n.t(lang, "chart_cigs"))
+    ax.set_xlabel(i18n.t(lang, "chart_hours_xlabel"))
     ax.set_xticks(range(0, 24, 2))
     ax.set_xticklabels([f"{h:02d}" for h in range(0, 24, 2)])
     ax.yaxis.set_major_locator(MaxNLocator(integer=True))
@@ -149,9 +151,9 @@ def hours_chart(by_hour: list[int]) -> io.BytesIO:
     return _finish(fig)
 
 
-def weekday_chart(by_weekday: list[int]) -> io.BytesIO:
+def weekday_chart(by_weekday: list[int], lang: str = "ru") -> io.BytesIO:
     """Гистограмма по дням недели (Пн…Вс)."""
-    labels = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+    labels = i18n.weekday_labels(lang)
     values = list(by_weekday)
 
     fig, ax = plt.subplots(figsize=(9, 5))
@@ -170,8 +172,8 @@ def weekday_chart(by_weekday: list[int]) -> io.BytesIO:
                         textcoords="offset points", xytext=(0, 5), ha="center",
                         fontsize=9, fontweight="bold")
 
-    ax.set_title("Сигареты по дням недели", fontsize=15, fontweight="bold", pad=14)
-    ax.set_ylabel("Сигарет")
+    ax.set_title(i18n.t(lang, "chart_weekday_title"), fontsize=15, fontweight="bold", pad=14)
+    ax.set_ylabel(i18n.t(lang, "chart_cigs"))
     ax.yaxis.set_major_locator(MaxNLocator(integer=True))
     ax.spines[["top", "right"]].set_visible(False)
     ax.grid(axis="x", visible=False)
@@ -179,7 +181,7 @@ def weekday_chart(by_weekday: list[int]) -> io.BytesIO:
     return _finish(fig)
 
 
-def spend_by_kind_chart(items: list[tuple[str, float]], currency: str) -> io.BytesIO:
+def spend_by_kind_chart(items: list[tuple[str, float]], currency: str, lang: str = "ru") -> io.BytesIO:
     """Круговая диаграмма: на что ушли деньги (табак/бумага/фильтры/…)."""
     labels = [k for k, _ in items]
     values = [v for _, v in items]
@@ -202,13 +204,13 @@ def spend_by_kind_chart(items: list[tuple[str, float]], currency: str) -> io.Byt
         t.set_color(TEXT)
 
     ax.legend(wedges, labels, loc="center", frameon=False, fontsize=11)
-    ax.set_title(f"Куда ушли деньги — всего {total:.0f} {currency}",
+    ax.set_title(i18n.t(lang, "chart_spend_title", total=f"{total:.0f}", cur=currency),
                  fontsize=15, fontweight="bold", pad=14)
     ax.set(aspect="equal")
     return _finish(fig)
 
 
-def money_bar_chart(days: list[tuple[str, float]], currency: str, title: str) -> io.BytesIO:
+def money_bar_chart(days: list[tuple[str, float]], currency: str, title: str, lang: str = "ru") -> io.BytesIO:
     """Гистограмма потраченных денег по дням."""
     labels = [datetime.fromisoformat(d).strftime("%d.%m") for d, _ in days]
     values = [v for _, v in days]
@@ -228,7 +230,7 @@ def money_bar_chart(days: list[tuple[str, float]], currency: str, title: str) ->
                     fontsize=9, fontweight="bold")
 
     ax.set_title(title, fontsize=15, fontweight="bold", pad=14)
-    ax.set_ylabel(f"Потрачено, {currency}")
+    ax.set_ylabel(i18n.t(lang, "chart_money_ylabel", cur=currency))
     ax.spines[["top", "right"]].set_visible(False)
     ax.grid(axis="x", visible=False)
     ax.margins(y=0.18)

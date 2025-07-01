@@ -78,6 +78,11 @@ def init_db() -> None:
         ]:
             if col not in cols:
                 conn.execute(f"ALTER TABLE users ADD COLUMN {col} {ddl}")
+        # Язык интерфейса. Новые пользователи получают английский (см. upsert_user),
+        # а существующие на момент миграции — русский (это Дамир и его друзья).
+        if "language" not in cols:
+            conn.execute("ALTER TABLE users ADD COLUMN language TEXT")
+            conn.execute("UPDATE users SET language = 'ru' WHERE language IS NULL")
 
 
 def user_exists(user_id: int) -> bool:
@@ -94,14 +99,30 @@ def upsert_user(user_id: int, username: Optional[str], first_name: Optional[str]
     with _connect() as conn:
         conn.execute(
             """
-            INSERT INTO users (user_id, username, first_name, display_name, created_at)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO users (user_id, username, first_name, display_name, created_at, language)
+            VALUES (?, ?, ?, ?, ?, 'en')
             ON CONFLICT(user_id) DO UPDATE SET
                 username = excluded.username,
                 first_name = excluded.first_name
             """,
             (user_id, username, first_name, first_name,
              datetime.now().isoformat(timespec="seconds")),
+        )
+
+
+def get_language(user_id: int) -> str:
+    """Язык интерфейса пользователя ('en' по умолчанию)."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT language FROM users WHERE user_id = ?", (user_id,)
+        ).fetchone()
+        return (row["language"] if row and row["language"] else "en")
+
+
+def set_language(user_id: int, language: str) -> None:
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE users SET language = ? WHERE user_id = ?", (language, user_id)
         )
 
 

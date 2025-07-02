@@ -540,7 +540,7 @@ async def settings_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     name = db.get_display_name(u.id) or u.first_name
     cur = user_currency(u.id)
     await update.message.reply_html(
-        i18n.t(lang, "se_title", name=name, cur=cur, lang=i18n.lang_name(lang)),
+        i18n.t(lang, "se_title", name=name, cur=cur, lang_name=i18n.lang_name(lang)),
         reply_markup=settings_menu_kb(lang),
     )
 
@@ -593,7 +593,7 @@ async def settings_language_set(update: Update, context: ContextTypes.DEFAULT_TY
     if code not in i18n.LANGS:
         code = i18n.DEFAULT_LANG
     db.set_language(u.id, code)
-    await query.edit_message_text(i18n.t(code, "lang_set", lang=i18n.lang_name(code)))
+    await query.edit_message_text(i18n.t(code, "lang_set", lang_name=i18n.lang_name(code)))
     await query.message.reply_text(i18n.t(code, "main_menu"), reply_markup=main_kb(code))
 
 

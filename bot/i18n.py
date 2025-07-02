@@ -270,9 +270,9 @@ STRINGS: dict[str, dict[str, str]] = {
     "se_lang": {"en": "🌐 Language", "ru": "🌐 Язык", "cs": "🌐 Jazyk"},
     "se_edit": {"en": "✏️ Edit/delete entries", "ru": "✏️ Изменить/удалить записи", "cs": "✏️ Upravit/smazat záznamy"},
     "se_title": {
-        "en": "⚙️ <b>Settings</b>\nName: <b>{name}</b>\nCurrency: <b>{cur}</b>\nLanguage: <b>{lang}</b>",
-        "ru": "⚙️ <b>Настройки</b>\nИмя: <b>{name}</b>\nВалюта: <b>{cur}</b>\nЯзык: <b>{lang}</b>",
-        "cs": "⚙️ <b>Nastavení</b>\nJméno: <b>{name}</b>\nMěna: <b>{cur}</b>\nJazyk: <b>{lang}</b>",
+        "en": "⚙️ <b>Settings</b>\nName: <b>{name}</b>\nCurrency: <b>{cur}</b>\nLanguage: <b>{lang_name}</b>",
+        "ru": "⚙️ <b>Настройки</b>\nИмя: <b>{name}</b>\nВалюта: <b>{cur}</b>\nЯзык: <b>{lang_name}</b>",
+        "cs": "⚙️ <b>Nastavení</b>\nJméno: <b>{name}</b>\nMěna: <b>{cur}</b>\nJazyk: <b>{lang_name}</b>",
     },
     "cur_eur": {"en": "🇪🇺 € euro", "ru": "🇪🇺 € евро", "cs": "🇪🇺 € euro"},
     "cur_uah": {"en": "🇺🇦 ₴ hryvnia", "ru": "🇺🇦 ₴ гривна", "cs": "🇺🇦 ₴ hřivna"},
@@ -290,7 +290,7 @@ STRINGS: dict[str, dict[str, str]] = {
                 "ru": "✅ Валюта: {cur} — суммы расходов теперь показываю в ней.",
                 "cs": "✅ Měna: {cur} — výdaje teď ukazuji v ní."},
     "lang_choose": {"en": "Choose a language:", "ru": "Выбери язык:", "cs": "Vyber jazyk:"},
-    "lang_set": {"en": "✅ Language: {lang}.", "ru": "✅ Язык: {lang}.", "cs": "✅ Jazyk: {lang}."},
+    "lang_set": {"en": "✅ Language: {lang_name}.", "ru": "✅ Язык: {lang_name}.", "cs": "✅ Jazyk: {lang_name}."},
 
     # ── Рейтинг ───────────────────────────────────────────────────
     "top_empty": {"en": "Nobody has logged anything yet 🙂", "ru": "Пока никто ничего не записал 🙂", "cs": "Zatím nikdo nic nezapsal 🙂"},

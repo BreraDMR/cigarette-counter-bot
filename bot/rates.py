@@ -53,7 +53,11 @@ def _fetch() -> dict | None:
             d = json.load(r)
         if d.get("result") == "success":
             rates = d["rates"]
-            return {c: float(rates[c]) for c in _CODES if c in rates}
+            # A zero or negative rate is nonsense and would blow up convert().
+            got = {c: float(rates[c]) for c in _CODES if c in rates}
+            got = {c: v for c, v in got.items() if v > 0}
+            if got.get("EUR"):
+                return got
     except Exception as e:  # noqa: BLE001 — любой сбой сети/парсинга не должен ронять бота
         log.warning("Не удалось получить курс валют: %s", e)
     return None
@@ -100,6 +104,6 @@ def convert(amount: float, from_symbol: str | None, to_symbol: str | None) -> fl
     if a is None or b is None or a == b:
         return amount
     rates = get_rates()
-    if a not in rates or b not in rates:
+    if not rates.get(a) or not rates.get(b):
         return amount
     return amount / rates[a] * rates[b]

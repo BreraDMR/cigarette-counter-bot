@@ -84,8 +84,12 @@ def get_rates() -> dict:
     if fresh:
         _mem = (now, fresh)
         try:
-            with open(_CACHE_PATH, "w", encoding="utf-8") as f:
+            # Write to a temp file and rename: a container restart mid-write
+            # used to leave a truncated rates.json that never parsed again.
+            tmp = _CACHE_PATH + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
                 json.dump({"ts": now, "rates": fresh}, f)
+            os.replace(tmp, _CACHE_PATH)
         except OSError as e:
             log.warning("Не удалось записать кэш курсов: %s", e)
         return fresh

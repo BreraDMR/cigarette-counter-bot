@@ -17,7 +17,9 @@ import urllib.request
 log = logging.getLogger("cigarette-bot.rates")
 
 _API = "https://open.er-api.com/v6/latest/EUR"
-_TTL = 12 * 3600  # как часто обновлять курс, секунд
+# How often to refresh, in hours. The free API is generous but there is no
+# reason to hit it more than twice a day for approximate numbers.
+_TTL = int(float(os.environ.get("RATES_TTL_HOURS", "12")) * 3600)
 _CODES = ("EUR", "UAH", "CZK")
 
 # Приблизительный запасной курс (единиц валюты за 1 EUR) — на случай, если API недоступен.

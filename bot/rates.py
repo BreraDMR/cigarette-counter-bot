@@ -1,9 +1,10 @@
-"""Курсы валют для авто-конвертации сумм расходников.
+"""Exchange rates, for converting what the consumables cost.
 
-Поддерживаем три валюты: евро, гривна, чешская крона. Курс берём бесплатно,
-без ключа, с https://open.er-api.com (база — EUR), кэшируем в /data на ~12 часов.
-Если интернета/API нет — используем приблизительный хардкод-фолбэк, чтобы бот
-никогда не падал. Конвертация «примерная» — этого для оценки трат достаточно.
+Three currencies: euro, hryvnia, Czech crown. Rates come from
+https://open.er-api.com (free, no key, EUR as the base) and are cached in /data
+for half a day. With no network we fall back to hardcoded approximate numbers,
+because a bot that dies over a missing exchange rate is worse than one that is
+a few percent off. Nothing here pretends to be accounting-grade.
 """
 
 from __future__ import annotations
@@ -22,10 +23,10 @@ _API = "https://open.er-api.com/v6/latest/EUR"
 _TTL = int(float(os.environ.get("RATES_TTL_HOURS", "12")) * 3600)
 _CODES = ("EUR", "UAH", "CZK")
 
-# Приблизительный запасной курс (единиц валюты за 1 EUR) — на случай, если API недоступен.
+# Rough fallback (units per 1 EUR) for when the API cannot be reached.
 _FALLBACK = {"EUR": 1.0, "UAH": 51.0, "CZK": 24.5}
 
-# Отображаемый символ ↔ ISO-код
+# Display symbol <-> ISO code
 SYMBOL = {"EUR": "€", "UAH": "грн", "CZK": "Kč"}
 _SYM2ISO = {
     "€": "EUR", "EUR": "EUR",
@@ -38,12 +39,12 @@ _CACHE_PATH = os.path.join(
     "rates.json",
 )
 
-# Кэш в памяти процесса: (timestamp, rates)
+# In-process cache: (timestamp, rates)
 _mem: tuple[float, dict] | None = None
 
 
 def iso(symbol: str | None) -> str | None:
-    """ISO-код по отображаемому символу валюты (или None, если не знаем)."""
+    """ISO code for a display symbol, or None if we do not recognise it."""
     if not symbol:
         return None
     return _SYM2ISO.get(symbol.strip())
@@ -60,19 +61,19 @@ def _fetch() -> dict | None:
             got = {c: v for c, v in got.items() if v > 0}
             if got.get("EUR"):
                 return got
-    except Exception as e:  # noqa: BLE001 — любой сбой сети/парсинга не должен ронять бота
-        log.warning("Не удалось получить курс валют: %s", e)
+    except Exception as e:  # noqa: BLE001 - no network or parse error may kill the bot
+        log.warning("Could not fetch exchange rates: %s", e)
     return None
 
 
 def get_rates() -> dict:
-    """Курсы (единиц валюты за 1 EUR). С кэшем в памяти, на диске и фолбэком."""
+    """Rates in units per 1 EUR, memory-cached, disk-cached, with a fallback."""
     global _mem
     now = time.time()
     if _mem and now - _mem[0] < _TTL:
         return _mem[1]
 
-    # Диск-кэш ещё свежий?
+    # Is the disk cache still fresh?
     try:
         with open(_CACHE_PATH, encoding="utf-8") as f:
             disk = json.load(f)
@@ -93,10 +94,10 @@ def get_rates() -> dict:
                 json.dump({"ts": now, "rates": fresh}, f)
             os.replace(tmp, _CACHE_PATH)
         except OSError as e:
-            log.warning("Не удалось записать кэш курсов: %s", e)
+            log.warning("Could not write the rates cache: %s", e)
         return fresh
 
-    # API не ответило — берём вчерашний диск-кэш (даже устаревший) или фолбэк.
+    # API said nothing - take yesterday's disk cache, stale or not, then the fallback.
     if disk and disk.get("rates"):
         _mem = (disk["ts"], disk["rates"])
         return _mem[1]
@@ -104,8 +105,10 @@ def get_rates() -> dict:
 
 
 def convert(amount: float, from_symbol: str | None, to_symbol: str | None) -> float:
-    """Переводит сумму из одной валюты в другую по примерному курсу.
-    Если валюту не распознали — возвращает сумму как есть (без конвертации)."""
+    """Convert between currencies at the approximate rate.
+
+    An unrecognised currency comes back untouched rather than as an error -
+    showing a number that is off by a rate beats showing nothing at all."""
     a, b = iso(from_symbol), iso(to_symbol)
     if a is None or b is None or a == b:
         return amount

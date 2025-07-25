@@ -1,7 +1,7 @@
-"""Слой работы с базой данных (SQLite).
+"""The SQLite layer.
 
-Хранит пользователей и их сигареты. Каждая запись может иметь
-привязанное локально сохранённое фото (путь к файлу).
+Holds users and their cigarettes. A record can carry a photo, stored on disk
+with only its path kept here.
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ def _connect() -> Iterator[sqlite3.Connection]:
 
 
 def init_db() -> None:
-    """Создаёт таблицы, если их ещё нет (с лёгкой миграцией display_name)."""
+    """Create the tables if they are missing, and run the small migrations."""
     os.makedirs(os.path.dirname(DB_PATH) or ".", exist_ok=True)
     with _connect() as conn:
         conn.executescript(
@@ -55,9 +55,9 @@ def init_db() -> None:
 
             CREATE INDEX IF NOT EXISTS idx_sets_user ON sets(user_id, created_at);
 
-            -- Расходники: пачка табака/бумаги/фильтров/сигарет.
-            -- Пользователь «открывает» упаковку (пишет цену), потом «закрывает»,
-            -- когда она закончилась. closed_at = NULL → ещё в ходу.
+            -- Consumables: a pack of tobacco, paper, filters or cigarettes.
+            -- You "open" a unit and record its price, then "close" it when it
+            -- runs out. closed_at = NULL means it is still in use.
             CREATE TABLE IF NOT EXISTS consumables (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id     INTEGER NOT NULL,
@@ -72,7 +72,7 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_cons_user ON consumables(user_id, opened_at);
             """
         )
-        # Миграции для старых БД (добавляем недостающие колонки)
+        # Migrations for databases created before these columns existed
         cols = {r["name"] for r in conn.execute("PRAGMA table_info(users)")}
         for col, ddl in [
             ("display_name", "TEXT"),
@@ -82,8 +82,9 @@ def init_db() -> None:
         ]:
             if col not in cols:
                 conn.execute(f"ALTER TABLE users ADD COLUMN {col} {ddl}")
-        # Язык интерфейса. Новые пользователи получают английский (см. upsert_user),
-        # а существующие на момент миграции — русский (это Дамир и его друзья).
+        # Interface language. New users get English (see upsert_user); everyone
+        # who already existed when this column landed was speaking Russian, so
+        # switching them would have been a rude surprise.
         if "language" not in cols:
             conn.execute("ALTER TABLE users ADD COLUMN language TEXT")
             conn.execute("UPDATE users SET language = 'ru' WHERE language IS NULL")
@@ -97,9 +98,11 @@ def user_exists(user_id: int) -> bool:
 
 
 def upsert_user(user_id: int, username: Optional[str], first_name: Optional[str]) -> None:
-    """Гарантирует наличие пользователя. Отображаемое имя (display_name)
-    задаётся при первом создании из имени Telegram и НЕ перезатирается потом —
-    его меняет только set_display_name (через регистрацию/смену имени)."""
+    """Make sure the user exists.
+
+    display_name is taken from Telegram on first sight and never overwritten
+    afterwards - only set_display_name touches it. Otherwise renaming yourself
+    in Telegram would silently rename you on the leaderboard."""
     with _connect() as conn:
         conn.execute(
             """
@@ -116,7 +119,7 @@ def upsert_user(user_id: int, username: Optional[str], first_name: Optional[str]
 
 
 def get_language(user_id: int) -> str:
-    """Язык интерфейса пользователя ('en' по умолчанию)."""
+    """The user's interface language, English by default."""
     with _connect() as conn:
         row = conn.execute(
             "SELECT language FROM users WHERE user_id = ?", (user_id,)
@@ -147,7 +150,7 @@ def get_display_name(user_id: int) -> Optional[str]:
 
 
 def add_set(user_id: int, count: int) -> int:
-    """Записывает перекур и возвращает его id."""
+    """Log a smoke break and return its id."""
     with _connect() as conn:
         cur = conn.execute(
             "INSERT INTO sets (user_id, count, created_at) VALUES (?, ?, ?)",
@@ -162,7 +165,7 @@ def attach_photo(set_id: int, photo_path: str) -> None:
 
 
 def last_set_id(user_id: int) -> Optional[int]:
-    """id последнего перекура пользователя (для привязки фото)."""
+    """Id of the user's last break, so a photo can be attached to it."""
     with _connect() as conn:
         row = conn.execute(
             "SELECT id FROM sets WHERE user_id = ? ORDER BY id DESC LIMIT 1",
@@ -200,7 +203,7 @@ def sets_count(user_id: int) -> int:
 
 
 def per_day(user_id: int) -> list[tuple[str, int]]:
-    """Сумма сигарет по дням: [(YYYY-MM-DD, count), ...] по возрастанию даты."""
+    """Cigarettes per day: [(YYYY-MM-DD, count), ...], oldest first."""
     with _connect() as conn:
         rows = conn.execute(
             "SELECT substr(created_at, 1, 10) AS day, SUM(count) AS total "
@@ -211,7 +214,7 @@ def per_day(user_id: int) -> list[tuple[str, int]]:
 
 
 def sessions(user_id: int) -> list[tuple[str, int]]:
-    """Все перекуры по порядку: [(timestamp, count), ...]."""
+    """Every break in order: [(timestamp, count), ...]."""
     with _connect() as conn:
         rows = conn.execute(
             "SELECT created_at, count FROM sets WHERE user_id = ? ORDER BY id",
@@ -221,7 +224,7 @@ def sessions(user_id: int) -> list[tuple[str, int]]:
 
 
 def by_hour(user_id: int) -> list[int]:
-    """Распределение сигарет по часам суток: список из 24 чисел (индекс = час)."""
+    """Cigarettes by hour of day: 24 numbers, index is the hour."""
     out = [0] * 24
     with _connect() as conn:
         rows = conn.execute(
@@ -237,10 +240,10 @@ def by_hour(user_id: int) -> list[int]:
 
 
 def by_weekday(user_id: int) -> list[int]:
-    """Распределение сигарет по дням недели: 7 чисел, индекс 0=Пн … 6=Вс."""
+    """Cigarettes by weekday: 7 numbers, index 0 = Monday ... 6 = Sunday."""
     out = [0] * 7
     with _connect() as conn:
-        # strftime('%w'): 0=воскресенье … 6=суббота
+        # strftime('%w') gives 0 = Sunday ... 6 = Saturday
         rows = conn.execute(
             "SELECT CAST(strftime('%w', created_at) AS INTEGER) AS w, "
             "SUM(count) AS total FROM sets WHERE user_id = ? GROUP BY w",
@@ -249,13 +252,13 @@ def by_weekday(user_id: int) -> list[int]:
     for r in rows:
         w = r["w"]
         if w is not None:
-            idx = (w - 1) % 7  # сдвигаем так, чтобы 0=Пн … 6=Вс
+            idx = (w - 1) % 7  # shift it so that 0 = Monday ... 6 = Sunday
             out[idx] = int(r["total"])
     return out
 
 
 def leaderboard() -> list[tuple[str, int]]:
-    """Рейтинг всех пользователей: [(имя, всего_сигарет), ...] по убыванию."""
+    """All users ranked: [(name, total), ...], most first."""
     with _connect() as conn:
         rows = conn.execute(
             """
@@ -273,7 +276,7 @@ def leaderboard() -> list[tuple[str, int]]:
 
 
 def recent_sets(user_id: int, limit: int = 10) -> list[tuple[int, str, int]]:
-    """Последние перекуры пользователя: [(id, timestamp, count), ...] — свежие сверху."""
+    """The user's recent breaks: [(id, timestamp, count), ...], newest first."""
     with _connect() as conn:
         rows = conn.execute(
             "SELECT id, created_at, count FROM sets "
@@ -284,7 +287,7 @@ def recent_sets(user_id: int, limit: int = 10) -> list[tuple[int, str, int]]:
 
 
 def set_owner(set_id: int) -> Optional[int]:
-    """user_id владельца перекура, либо None если перекура нет."""
+    """Who owns this break, or None if there is no such break."""
     with _connect() as conn:
         row = conn.execute(
             "SELECT user_id FROM sets WHERE id = ?", (set_id,)
@@ -298,7 +301,7 @@ def edit_set(set_id: int, count: int) -> None:
 
 
 def set_created_at(set_id: int) -> Optional[str]:
-    """Время перекура (ISO-строка), либо None если записи нет."""
+    """When the break happened, as an ISO string, or None if it is gone."""
     with _connect() as conn:
         row = conn.execute(
             "SELECT created_at FROM sets WHERE id = ?", (set_id,)
@@ -318,9 +321,9 @@ def delete_set(set_id: int) -> None:
         conn.execute("DELETE FROM sets WHERE id = ?", (set_id,))
 
 
-# ── Настройки пользователя (валюта, цена и размер пачки) ──────────
+# -- Per-user settings: currency, price and pack size --------------
 def get_settings(user_id: int) -> dict:
-    """Настройки стоимости. price_per_pack=None означает «не задано»."""
+    """Pricing settings. price_per_pack of None means "never set"."""
     with _connect() as conn:
         row = conn.execute(
             "SELECT currency, price_per_pack, pack_size FROM users WHERE user_id = ?",
@@ -348,9 +351,9 @@ def set_settings(user_id: int, currency: str, price_per_pack: float, pack_size: 
         )
 
 
-# ── Недельные суммы и рейтинг «меньше = лучше» ────────────────────
+# -- Weekly totals and the "fewer is better" ranking ----------------
 def range_total(user_id: int, start: str, end: str) -> int:
-    """Сумма сигарет за период [start, end) — даты в формате YYYY-MM-DD."""
+    """Cigarettes over [start, end), dates as YYYY-MM-DD."""
     with _connect() as conn:
         row = conn.execute(
             "SELECT COALESCE(SUM(count), 0) AS t FROM sets "
@@ -360,10 +363,12 @@ def range_total(user_id: int, start: str, end: str) -> int:
         return int(row["t"])
 
 
-# ── Расходники (табак / бумага / фильтры / сигареты) ──────────────
+# -- Consumables: tobacco, paper, filters, ready-made packs ---------
 def open_consumable(user_id: int, kind: str, price: float, currency: str) -> int:
-    """Открывает новую упаковку. Если упаковка этого же типа была ещё открыта —
-    автоматически закрывает её (значит «старая кончилась, новая началась»)."""
+    """Open a new unit.
+
+    If one of the same kind was still open it gets closed automatically -
+    opening a second pouch of tobacco means the first one ran out."""
     now = datetime.now().isoformat(timespec="seconds")
     with _connect() as conn:
         conn.execute(
@@ -380,8 +385,9 @@ def open_consumable(user_id: int, kind: str, price: float, currency: str) -> int
 
 
 def close_consumable(user_id: int, kind: str) -> bool:
-    """Отмечает открытую упаковку этого типа как закончившуюся.
-    Возвращает True, если было что закрывать."""
+    """Mark the open unit of this kind as finished.
+
+    Returns True if there was anything to close."""
     now = datetime.now().isoformat(timespec="seconds")
     with _connect() as conn:
         cur = conn.execute(
@@ -393,7 +399,7 @@ def close_consumable(user_id: int, kind: str) -> bool:
 
 
 def open_consumables(user_id: int) -> list[tuple[str, float, str, str]]:
-    """Сейчас открытые упаковки: [(kind, price, currency, opened_at), ...]."""
+    """Units currently in use: [(kind, price, currency, opened_at), ...]."""
     with _connect() as conn:
         rows = conn.execute(
             "SELECT kind, price, currency, opened_at FROM consumables "
@@ -404,8 +410,10 @@ def open_consumables(user_id: int) -> list[tuple[str, float, str, str]]:
 
 
 def all_consumables(user_id: int) -> list[tuple[str, float, str]]:
-    """Все купленные упаковки: [(kind, price, currency), ...] —
-    валюту храним по каждой покупке, чтобы потом сконвертировать в Python."""
+    """Everything ever bought: [(kind, price, currency), ...].
+
+    The currency is stored per purchase, not per user, so a pouch bought in
+    Kyiv still reads as hryvnia after you move and switch to crowns."""
     with _connect() as conn:
         rows = conn.execute(
             "SELECT kind, price, currency FROM consumables WHERE user_id = ?",
@@ -415,8 +423,10 @@ def all_consumables(user_id: int) -> list[tuple[str, float, str]]:
 
 
 def leaderboard_week(start: str, end: str) -> list[tuple[str, int]]:
-    """Рейтинг за период [start, end): [(имя, сигарет_за_неделю), ...]
-    по ВОЗРАСТАНИЮ (меньше — выше). Только пользователи, у кого вообще есть записи."""
+    """Ranking over [start, end): [(name, cigarettes), ...] ASCENDING.
+
+    Fewer is higher - that is the whole point of the board. Only users who
+    have logged something at all take part."""
     with _connect() as conn:
         rows = conn.execute(
             """

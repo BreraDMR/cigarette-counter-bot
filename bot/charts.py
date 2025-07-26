@@ -1,6 +1,8 @@
-"""Построение красивых графиков (стиль «как в Excel») через matplotlib.
+"""Charts, drawn with matplotlib in a deliberately Excel-ish style.
 
-Каждая функция возвращает PNG в виде BytesIO, готовый к отправке в Telegram.
+Every function returns a PNG in a BytesIO, ready to hand to Telegram. The
+look is plain on purpose - this is a number you glance at on a phone, not a
+poster.
 """
 
 from __future__ import annotations
@@ -10,16 +12,16 @@ from datetime import datetime
 
 import matplotlib
 
-matplotlib.use("Agg")  # без GUI, рендер в файл
+matplotlib.use("Agg")  # no GUI, render straight to a buffer
 import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
 from matplotlib.ticker import MaxNLocator
 
 from . import i18n
 
-# Палитра в духе Excel
-ACCENT = "#2E75B6"   # синий
-ACCENT2 = "#ED7D31"  # оранжевый
+# An Excel-ish palette
+ACCENT = "#2E75B6"   # blue
+ACCENT2 = "#ED7D31"  # orange
 GRID = "#D9D9D9"
 TEXT = "#404040"
 
@@ -50,7 +52,7 @@ def _finish(fig) -> io.BytesIO:
 
 
 def line_chart(sessions: list[tuple[str, int]], title: str, lang: str = "ru") -> io.BytesIO:
-    """Линейный график сигарет по перекурам (с заливкой области)."""
+    """Cigarettes per break as a filled line."""
     x = [datetime.fromisoformat(ts) for ts, _ in sessions]
     y = [c for _, c in sessions]
 
@@ -74,7 +76,7 @@ def line_chart(sessions: list[tuple[str, int]], title: str, lang: str = "ru") ->
 
 
 def cumulative_chart(sessions: list[tuple[str, int]], total: int, lang: str = "ru") -> io.BytesIO:
-    """Накопительный график: сколько всего выкурил к каждому моменту."""
+    """Running total: how much has been smoked by each point in time."""
     x = [datetime.fromisoformat(ts) for ts, _ in sessions]
     cum, running = [], 0
     for _, c in sessions:
@@ -96,14 +98,14 @@ def cumulative_chart(sessions: list[tuple[str, int]], total: int, lang: str = "r
 
 
 def days_bar_chart(days: list[tuple[str, int]], title: str, lang: str = "ru") -> io.BytesIO:
-    """Гистограмма (столбики) по дням: сколько сигарет в какой день."""
+    """Bars per day: how many cigarettes on which date."""
     labels = [datetime.fromisoformat(d).strftime("%d.%m") for d, _ in days]
     values = [v for _, v in days]
 
     fig, ax = plt.subplots(figsize=(9, 5))
     bars = ax.bar(labels, values, color=ACCENT, width=0.62, edgecolor="white")
 
-    # выделяем больше всего за день
+    # highlight the worst day
     if values:
         best = max(range(len(values)), key=lambda i: values[i])
         bars[best].set_color(ACCENT2)
@@ -124,7 +126,7 @@ def days_bar_chart(days: list[tuple[str, int]], title: str, lang: str = "ru") ->
 
 
 def hours_chart(by_hour: list[int], lang: str = "ru") -> io.BytesIO:
-    """Гистограмма «в какое время суток чаще куришь» (24 столбика, по часам)."""
+    """When during the day the urge hits: 24 bars, one per hour."""
     hours = list(range(24))
     values = list(by_hour)
 
@@ -152,13 +154,13 @@ def hours_chart(by_hour: list[int], lang: str = "ru") -> io.BytesIO:
 
 
 def weekday_chart(by_weekday: list[int], lang: str = "ru") -> io.BytesIO:
-    """Гистограмма по дням недели (Пн…Вс)."""
+    """Bars by weekday, Monday through Sunday."""
     labels = i18n.weekday_labels(lang)
     values = list(by_weekday)
 
     fig, ax = plt.subplots(figsize=(9, 5))
     colors = [ACCENT] * 7
-    # выходные — другим цветом
+    # weekends get their own colour
     colors[5] = colors[6] = "#7B61FF"
     bars = ax.bar(labels, values, color=colors, width=0.66, edgecolor="white")
 
@@ -182,7 +184,7 @@ def weekday_chart(by_weekday: list[int], lang: str = "ru") -> io.BytesIO:
 
 
 def spend_by_kind_chart(items: list[tuple[str, float]], currency: str, lang: str = "ru") -> io.BytesIO:
-    """Круговая диаграмма: на что ушли деньги (табак/бумага/фильтры/…)."""
+    """Where the money went, by kind of consumable."""
     labels = [k for k, _ in items]
     values = [v for _, v in items]
     palette = [ACCENT, ACCENT2, "#7B61FF", "#27AE60", "#C0392B", "#F1C40F"]
@@ -211,7 +213,7 @@ def spend_by_kind_chart(items: list[tuple[str, float]], currency: str, lang: str
 
 
 def money_bar_chart(days: list[tuple[str, float]], currency: str, title: str, lang: str = "ru") -> io.BytesIO:
-    """Гистограмма потраченных денег по дням."""
+    """Money spent, by day."""
     labels = [datetime.fromisoformat(d).strftime("%d.%m") for d, _ in days]
     values = [v for _, v in days]
 

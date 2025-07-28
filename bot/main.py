@@ -1,13 +1,14 @@
-"""Телеграм-бот «Счётчик сигарет» — интерактивный, с кнопками.
+"""The cigarette counter bot: everything happens through buttons.
 
-Логика простая: одна сигарета = один перекур. Нажал «Перекур +1» — записал.
-Статистика спрятана под одной кнопкой, внутри — разные срезы (по часам суток,
-по дням недели, динамика, интервалы, тренд). Деньги считаются не «по пачке»,
-а по реальным расходникам: табак / бумага / фильтры / пачка сигарет — открыл
-упаковку (записал цену), кончилась — отметил. Данные в SQLite.
+The rule is one cigarette per break, so "Smoke +1" is a single tap with
+nothing to type. The statistics hide behind one button and open into cuts -
+by hour, by weekday, dynamics, intervals, trend. Money is not counted by the
+pack but by real consumables: tobacco, paper, filters or a ready-made pack.
+You open a unit with its price and mark it finished when it runs out.
+Everything lives in SQLite.
 
-Интерфейс локализован (английский по умолчанию, плюс русский и чешский) —
-все строки живут в bot/i18n.py, язык хранится у пользователя в БД.
+The interface is localised - English by default, plus Russian and Czech. The
+strings are in bot/i18n.py and each user's choice is kept in the database.
 """
 
 from __future__ import annotations
@@ -41,16 +42,16 @@ logging.basicConfig(
 log = logging.getLogger("cigarette-bot")
 
 PHOTO_DIR = os.environ.get("PHOTO_DIR", "/data/photos")
-MIN_PER_CIG = 5  # средняя длительность одной сигареты, минут (для оценки времени)
+MIN_PER_CIG = 5  # minutes per cigarette, for the "time spent smoking" estimate
 
-# ── Типы расходников (ключи; подписи берутся из i18n по языку) ────
+# -- Kinds of consumable. These are keys; the labels come from i18n ---
 KINDS = ["tobacco", "paper", "filters", "cigs"]
 
-# ── Состояния диалогов ───────────────────────────────────────────
+# -- Conversation states ---------------------------------------------
 NAME, EDIT_VALUE, EX_PRICE = range(3)
 
 
-# ── Клавиатуры (строятся под язык пользователя) ──────────────────
+# -- Keyboards, built per user language -------------------------------
 def main_kb(lang: str) -> ReplyKeyboardMarkup:
     T = lambda k: i18n.t(lang, k)
     return ReplyKeyboardMarkup(
@@ -88,9 +89,9 @@ def stats_menu_kb(lang: str) -> InlineKeyboardMarkup:
     )
 
 
-# ── Вспомогательные функции ──────────────────────────────────────
+# -- Helpers -----------------------------------------------------------
 def week_bounds(offset: int = 0) -> tuple[str, str]:
-    """Границы ISO-недели [понедельник, следующий понедельник) как YYYY-MM-DD."""
+    """The ISO week as [monday, next monday), both YYYY-MM-DD."""
     today = date.today()
     monday = today - timedelta(days=today.weekday()) - timedelta(weeks=offset)
     return monday.isoformat(), (monday + timedelta(days=7)).isoformat()
@@ -121,7 +122,7 @@ def user_currency(user_id: int) -> str:
 
 
 def total_spent_converted(user_id: int) -> float:
-    """Все траты, сконвертированные в текущую валюту пользователя."""
+    """Everything spent, converted into the user's current currency."""
     cur = user_currency(user_id)
     return sum(
         rates.convert(price, item_cur or cur, cur)
@@ -130,7 +131,7 @@ def total_spent_converted(user_id: int) -> float:
 
 
 def spent_by_kind_converted(user_id: int) -> list[tuple[str, float]]:
-    """Траты по типам в текущей валюте: [(kind, сумма), ...] по убыванию."""
+    """Spending per kind in the current currency, biggest first."""
     cur = user_currency(user_id)
     agg: dict[str, float] = {}
     for kind, price, item_cur in db.all_consumables(user_id):
@@ -138,7 +139,7 @@ def spent_by_kind_converted(user_id: int) -> list[tuple[str, float]]:
     return sorted(agg.items(), key=lambda kv: kv[1], reverse=True)
 
 
-# ── Регистрация / смена имени ────────────────────────────────────
+# -- Registration and renaming ----------------------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u = update.effective_user
     is_new = not db.user_exists(u.id)
@@ -203,7 +204,7 @@ async def name_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
-# ── Перекур: просто +1 ────────────────────────────────────────────
+# -- The break itself: just +1 -----------------------------------------
 async def add_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u = update.effective_user
     db.upsert_user(u.id, u.username, u.first_name)
@@ -218,7 +219,7 @@ async def add_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-# ── Быстрое удаление последнего перекура ─────────────────────────
+# -- Quick undo of the last break --------------------------------------
 async def dellast_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u = update.effective_user
     lang = db.get_language(u.id)
@@ -238,7 +239,7 @@ async def dellast_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-# ── Статистика (одна кнопка → меню) ──────────────────────────────
+# -- Statistics: one button, then a menu -------------------------------
 async def stats_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lang = db.get_language(update.effective_user.id)
     await update.message.reply_html(
@@ -356,7 +357,7 @@ async def _send_trend(msg, user_id: int):
     )
 
 
-# ── Расходы (расходники) ─────────────────────────────────────────
+# -- Expenses ----------------------------------------------------------
 def expenses_menu_kb(lang: str) -> InlineKeyboardMarkup:
     T = lambda k: i18n.t(lang, k)
     return InlineKeyboardMarkup(
@@ -379,7 +380,7 @@ def _expenses_text(user_id: int) -> str:
         lines.append(i18n.t(lang, "exp_open_now"))
         for kind, price, c, _ in open_items:
             shown = fmt_money(rates.convert(price, c or cur, cur), cur)
-            # если покупал в другой валюте — подскажем исходную цену
+            # bought in another currency? show what it originally cost
             if c and c != cur:
                 shown += f" <i>({fmt_money(price, c)})</i>"
             lines.append(f"• {i18n.kind_label(lang, kind)} — {shown}")
@@ -412,7 +413,7 @@ def _kind_kb(prefix: str, kinds: list[str], lang: str) -> InlineKeyboardMarkup:
 
 
 async def expenses_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Кнопки меню расходов, КРОМЕ «открыть» (та — отдельный диалог)."""
+    """The expenses menu, minus "open" - that one is its own conversation."""
     query = update.callback_query
     await query.answer()
     u = query.from_user
@@ -457,7 +458,7 @@ async def expenses_close_kind(update: Update, context: ContextTypes.DEFAULT_TYPE
     await query.message.reply_html(_expenses_text(u.id), reply_markup=expenses_menu_kb(lang))
 
 
-# ── Открытие упаковки (диалог: тип → цена) ───────────────────────
+# -- Opening a unit: pick the kind, then the price ---------------------
 async def expenses_new_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -465,7 +466,7 @@ async def expenses_new_entry(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await query.edit_message_text(
         i18n.t(lang, "exp_what_open"), reply_markup=_kind_kb("exnew", KINDS, lang)
     )
-    return EX_PRICE  # ждём выбор типа (кнопка), потом цену
+    return EX_PRICE  # wait for the kind button, then the price
 
 
 async def expenses_new_kind(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -520,7 +521,7 @@ async def expenses_new_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
     return ConversationHandler.END
 
 
-# ── Настройки (имя + валюта + язык) ──────────────────────────────
+# -- Settings: name, currency, language --------------------------------
 def settings_menu_kb(lang: str) -> InlineKeyboardMarkup:
     T = lambda k: i18n.t(lang, k)
     return InlineKeyboardMarkup(
@@ -597,7 +598,7 @@ async def settings_language_set(update: Update, context: ContextTypes.DEFAULT_TY
     await query.message.reply_text(i18n.t(code, "main_menu"), reply_markup=main_kb(code))
 
 
-# ── Рейтинг ──────────────────────────────────────────────────────
+# -- The leaderboard ---------------------------------------------------
 async def top_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lang = db.get_language(update.effective_user.id)
     board = db.leaderboard_week(*week_bounds(0))
@@ -612,7 +613,7 @@ async def top_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_html("\n".join(lines), reply_markup=main_kb(lang))
 
 
-# ── Редактирование записей ───────────────────────────────────────
+# -- Editing records ---------------------------------------------------
 async def _show_edit_list(message, user_id: int):
     lang = db.get_language(user_id)
     rows = db.recent_sets(user_id, limit=10)
@@ -743,7 +744,7 @@ async def edit_delete_no(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 def _parse_new_time(text: str, current_iso: str) -> str | None:
-    """Разбирает введённое пользователем время в ISO-строку.
+    """Parse a time the user typed into an ISO string.
     Недостающие части (год/дату) берёт из текущего времени записи."""
     text = text.strip().replace("T", " ")
     try:

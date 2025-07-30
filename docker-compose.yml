@@ -6,7 +6,14 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
-      # Часовой пояс для времени перекуров. Поменяй здесь, если переедешь.
+      # Timezone the breaks are stamped in. Change it if you move.
       TZ: ${TZ:-Europe/Prague}
     volumes:
       - ./data:/data
+    logging:
+      # Without a cap the json log grows until the disk complains, and on a
+      # small VPS that happens sooner than you would think.
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

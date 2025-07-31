@@ -141,11 +141,26 @@ bot/
   main.py     — command handlers and bot startup
   db.py       — SQLite layer (users, smoke breaks, consumables, photos)
   charts.py   — chart rendering (matplotlib)
+  i18n.py     — every user-facing string, in English, Russian and Czech
+  rates.py    — exchange rates, cached, with an offline fallback
 Dockerfile
 docker-compose.yml
 requirements.txt
 .env.example
 ```
+
+## Money and currencies
+
+Prices are stored **per purchase**, with the currency they were paid in, and
+converted only when something is displayed. A pouch bought in hryvnia stays a
+hryvnia purchase in the database even after you switch the interface to crowns.
+
+Rates come from [open.er-api.com](https://open.er-api.com) — free, no key, EUR
+as the base — and are cached on disk for `RATES_TTL_HOURS` (12 by default). If
+the API is unreachable the bot uses the last cached rates, however stale, and
+falls back to hardcoded approximate ones only when there is nothing at all.
+The numbers are meant for "roughly how much is this habit costing", not
+accounting.
 
 ## Data
 

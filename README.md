@@ -169,3 +169,19 @@ accounting.
 
 The `data/` folder and `.env` are excluded from git (`.gitignore`) — the token and
 personal data never end up in the repository.
+
+## When something goes wrong
+
+**The bot starts and immediately exits.** Almost always an empty `BOT_TOKEN`.
+`docker compose logs` shows the exception; a token pasted with a trailing space
+counts as empty here.
+
+**Charts come out with boxes instead of letters.** The Cyrillic font is missing —
+that is what `fonts-dejavu-core` in the Dockerfile is for. Running outside
+Docker on a bare system, install it yourself.
+
+**Times are off by a couple of hours.** `TZ` is not reaching the container.
+Check it inside: `docker compose exec cigarette-bot date`.
+
+**"database is locked".** Two copies of the bot are running against the same
+file — a leftover container plus a local run, usually.

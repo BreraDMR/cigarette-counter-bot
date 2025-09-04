@@ -185,3 +185,9 @@ Check it inside: `docker compose exec cigarette-bot date`.
 
 **"database is locked".** Two copies of the bot are running against the same
 file — a leftover container plus a local run, usually.
+
+## License
+
+Licensed under [PolyForm Noncommercial 1.0.0](LICENSE) — free for personal,
+educational, and other noncommercial use. Commercial use requires a separate
+license; contact damir.brera.eb@gmail.com.

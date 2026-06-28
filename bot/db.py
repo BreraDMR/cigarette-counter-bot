@@ -52,10 +52,16 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_sets_user ON sets(user_id, created_at);
             """
         )
-        # Миграция для старых БД, созданных без display_name
+        # Миграции для старых БД (добавляем недостающие колонки)
         cols = {r["name"] for r in conn.execute("PRAGMA table_info(users)")}
-        if "display_name" not in cols:
-            conn.execute("ALTER TABLE users ADD COLUMN display_name TEXT")
+        for col, ddl in [
+            ("display_name", "TEXT"),
+            ("currency", "TEXT"),
+            ("price_per_pack", "REAL"),
+            ("pack_size", "INTEGER"),
+        ]:
+            if col not in cols:
+                conn.execute(f"ALTER TABLE users ADD COLUMN {col} {ddl}")
 
 
 def user_exists(user_id: int) -> bool:
@@ -218,3 +224,62 @@ def edit_set(set_id: int, count: int) -> None:
 def delete_set(set_id: int) -> None:
     with _connect() as conn:
         conn.execute("DELETE FROM sets WHERE id = ?", (set_id,))
+
+
+# ── Настройки пользователя (валюта, цена и размер пачки) ──────────
+def get_settings(user_id: int) -> dict:
+    """Настройки стоимости. price_per_pack=None означает «не задано»."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT currency, price_per_pack, pack_size FROM users WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+    if not row:
+        return {"currency": "грн", "price_per_pack": None, "pack_size": 20}
+    return {
+        "currency": row["currency"] or "грн",
+        "price_per_pack": row["price_per_pack"],
+        "pack_size": row["pack_size"] or 20,
+    }
+
+
+def set_settings(user_id: int, currency: str, price_per_pack: float, pack_size: int) -> None:
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE users SET currency = ?, price_per_pack = ?, pack_size = ? WHERE user_id = ?",
+            (currency, price_per_pack, pack_size, user_id),
+        )
+
+
+# ── Недельные суммы и рейтинг «меньше = лучше» ────────────────────
+def range_total(user_id: int, start: str, end: str) -> int:
+    """Сумма сигарет за период [start, end) — даты в формате YYYY-MM-DD."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT COALESCE(SUM(count), 0) AS t FROM sets "
+            "WHERE user_id = ? AND created_at >= ? AND created_at < ?",
+            (user_id, start, end),
+        ).fetchone()
+        return int(row["t"])
+
+
+def leaderboard_week(start: str, end: str) -> list[tuple[str, int]]:
+    """Рейтинг за период [start, end): [(имя, сигарет_за_неделю), ...]
+    по ВОЗРАСТАНИЮ (меньше — выше). Только пользователи, у кого вообще есть записи."""
+    with _connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT u.user_id,
+                   COALESCE(u.display_name, u.first_name, u.username, 'Аноним') AS name,
+                   COALESCE(SUM(CASE WHEN s.created_at >= ? AND s.created_at < ?
+                                     THEN s.count END), 0) AS week,
+                   COUNT(s.id) AS ever
+            FROM users u
+            LEFT JOIN sets s ON s.user_id = u.user_id
+            GROUP BY u.user_id
+            HAVING ever > 0
+            ORDER BY week ASC, name ASC
+            """,
+            (start, end),
+        ).fetchall()
+        return [(r["name"], int(r["week"])) for r in rows]

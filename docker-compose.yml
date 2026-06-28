@@ -1,0 +1,9 @@
+services:
+  cigarette-bot:
+    build: .
+    image: cigarette-counter-bot:latest
+    container_name: cigarette-counter-bot
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./data:/data

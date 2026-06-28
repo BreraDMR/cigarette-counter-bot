@@ -1,94 +1,128 @@
+<div align="center">
+
 # 🚬 Cigarette Counter Bot
 
-Телеграм-бот — счётчик сигарет. Интерактивный: всё управляется **кнопками
-внизу экрана** и пошаговыми диалогами (бот спрашивает — ты отвечаешь). Смотри
-красивые графики (в стиле Excel), соревнуйся с другими участниками в общем
-рейтинге и прикрепляй фото к перекурам. Все данные хранятся в SQLite — для
-каждого пользователя отдельно. Команды через `/` тоже работают как дубль.
+**A Telegram bot that makes a smoking habit impossible to ignore — log every cigarette in two taps, then see the money, hours and trend going up in smoke, with a "who's calmest" leaderboard to push you down.**
 
-## Возможности
+[![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white&style=for-the-badge)](requirements.txt)
+[![python-telegram-bot](https://img.shields.io/badge/python--telegram--bot-21.x%20async-2CA5E0?logo=telegram&logoColor=white&style=for-the-badge)](requirements.txt)
+[![matplotlib](https://img.shields.io/badge/matplotlib-charts-11557C?style=for-the-badge)](bot/charts.py)
+[![SQLite](https://img.shields.io/badge/SQLite-storage-003B57?logo=sqlite&logoColor=white&style=for-the-badge)](bot/db.py)
+[![Docker](https://img.shields.io/badge/Docker-2496ED?logo=docker&logoColor=white&style=for-the-badge)](docker-compose.yml)
 
-- **Регистрация с именем** — при первом `/start` бот спрашивает, как записать
-  тебя в рейтинге (можно сменить позже кнопкой «Сменить имя»).
-- **Запись перекуров** — кнопка «Записать перекур»: бот спрашивает, сколько
-  сигарет ты выкурил, и ты пишешь число (или команда `/add 20`).
-- **Графики:**
-  - `/chart` — линейный график сигарет по перекурам;
-  - `/days` — гистограмма по дням (сколько в какой день, с подсветкой рекорда);
-  - `/total` — накопительный график «сколько уже всего» (командой).
-- **💸 Деньги и время** — кнопка «Сожжено» (`/money`): сколько денег и часов
-  ушло «в дым», график трат по дням. Цена и размер пачки задаются в «Настройки».
-- **⏱ Интервалы и стрики** — кнопка «Интервалы» (`/intervals`): как давно не
-  куришь, самый длинный перерыв, среднее время между перекурами.
-- **📉 Тренд** — кнопка «Тренд» (`/trend`): эта неделя против прошлой (±%).
-- **Статистика** — `/today`, `/stats` (всего, перекуров, дней, среднее за день,
-  рекорд, потраченные деньги и время).
-- **Рейтинг наоборот** — кнопка «Рейтинг» (`/top`): «у кого спокойнее» —
-  участники по количеству за неделю, **меньше — выше**.
-- **⚙️ Настройки** — кнопка «Настройки» (`/settings`): валюта, цена пачки и
-  сколько сигарет в пачке (для подсчёта денег).
-- **Редактирование и удаление** — кнопка «Изменить записи»: бот показывает
-  последние записи кнопками, ты выбираешь нужную, а дальше кнопками выбираешь
-  «✏️ Изменить число» или «🗑 Удалить запись» (удаление — с подтверждением).
-  Правишь только свои записи; команда `/edit` тоже работает.
-- **Фото (по желанию)** — пришли фото после перекура, оно сохранится локально
-  (`data/photos/<user_id>/`) и привяжется к последней записи.
-- **Мультипользовательский режим** — данные изолированы по `user_id`.
+</div>
 
-## Команды
+A Telegram bot that counts the cigarettes you smoke. It's fully interactive:
+everything is driven by **on-screen buttons** and step-by-step dialogs (the bot
+asks, you answer), so there's no syntax to memorize. See clean Excel-style charts,
+compete with others on a shared leaderboard (where **smoking less ranks you
+higher**), and attach a photo to a smoke break. All data lives in SQLite, kept
+**separately per user**. Slash commands work too, as a shortcut.
 
-Обычно достаточно кнопок, но всё доступно и командами:
+## The problems it solves
 
-| Команда | Описание |
+- **You can't quit what you don't measure.** Each smoke break — just a number — is
+  logged in a guided chat flow ("Log a break" → type how many you smoked), so the
+  record takes seconds and there's no app beyond Telegram to install.
+- **"A pack costs a bit" hides the real total.** The **"Burned"** view (`/money`)
+  turns your habit into concrete **money and hours lost**, with a per-day spending
+  chart. Pack price and size are set in **Settings**, so the numbers are yours.
+- **A raw count doesn't show whether you're winning.** The bot renders **charts**
+  (`matplotlib`): cigarettes per break, a per-day histogram with the record day
+  highlighted, and a cumulative total — plus a **Trend** view (`/trend`) comparing
+  this week to last (±%), and **Intervals** (`/intervals`): how long you've gone
+  without one, your longest streak, and the average gap between breaks.
+- **Willpower alone fades.** A reverse **leaderboard** (`/top`) ranks participants
+  by cigarettes this week — **fewer is higher** — so the social pressure pushes you
+  the right way instead of rewarding more.
+- **Mistakes happen when you log fast.** You can **edit or delete** your own
+  entries from a button list (delete asks for confirmation) — you can only touch
+  your own records.
+- **One bot, many users.** All data is isolated by `user_id`, so a group can share
+  the same bot without seeing each other's raw entries.
+
+## Features
+
+- **Registration with a name** — on the first `/start` the bot asks how to list you
+  on the leaderboard (changeable later via "Change name").
+- **Logging smoke breaks** — "Log a break" button: the bot asks how many cigarettes
+  you smoked and you type the number (or `/add 20`).
+- **Charts:**
+  - `/chart` — line chart of cigarettes per break;
+  - `/days` — per-day histogram (with the record day highlighted);
+  - `/total` — cumulative "total so far" chart.
+- **💸 Money & time** — "Burned" button (`/money`): money and hours gone up in
+  smoke, plus a per-day spending chart. Price and pack size are set in Settings.
+- **⏱ Intervals & streaks** — "Intervals" button (`/intervals`): how long you've
+  gone without smoking, your longest break, the average gap between breaks.
+- **📉 Trend** — "Trend" button (`/trend`): this week vs. last (±%).
+- **Stats** — `/today`, `/stats` (total, breaks, days, daily average, record,
+  money and time spent).
+- **Reverse leaderboard** — "Leaderboard" button (`/top`): "who's calmest" —
+  participants ranked by weekly count, **fewer is higher**.
+- **⚙️ Settings** — "Settings" button (`/settings`): currency, pack price and
+  cigarettes per pack (for the money math).
+- **Edit & delete** — "Edit entries" button: the bot shows your recent entries as
+  buttons; pick one, then "✏️ Change number" or "🗑 Delete entry" (delete with
+  confirmation). You can only edit your own entries; `/edit` works too.
+- **Photos (optional)** — send a photo after a break and it's saved locally
+  (`data/photos/<user_id>/`) and attached to the last entry.
+- **Multi-user** — data isolated per `user_id`.
+
+## Commands
+
+Buttons are usually enough, but everything is available as a command too:
+
+| Command | Description |
 |---|---|
-| `/start` | регистрация (спросит имя) и главное меню |
-| `/setname` | сменить имя в рейтинге |
-| `/settings` | валюта, цена и размер пачки |
-| `/add` (или `/add 20`) | записать перекур — спросит число, либо задать сразу |
-| `/today` | сколько выкурил сегодня |
-| `/money` | сколько денег и времени «в дым» + график трат |
-| `/intervals` | как давно не куришь, перерывы |
-| `/trend` | эта неделя против прошлой |
-| `/total` | накопительный график за всё время |
-| `/chart` | график сигарет по перекурам |
-| `/days` | гистограмма по дням |
-| `/stats` | сводка цифрами |
-| `/top` | рейтинг за неделю (меньше — выше) |
-| `/edit` | выбрать запись и исправить/удалить |
-| `/cancel` | отменить текущий диалог |
-| `/help` | справка |
+| `/start` | register (asks your name) and open the main menu |
+| `/setname` | change your leaderboard name |
+| `/settings` | currency, pack price and pack size |
+| `/add` (or `/add 20`) | log a smoke break — asks for the number, or set it inline |
+| `/today` | how many cigarettes today |
+| `/money` | money and time gone up in smoke + spending chart |
+| `/intervals` | how long without one, breaks between |
+| `/trend` | this week vs. last |
+| `/total` | cumulative chart over all time |
+| `/chart` | cigarettes-per-break chart |
+| `/days` | per-day histogram |
+| `/stats` | numeric summary |
+| `/top` | weekly leaderboard (fewer is higher) |
+| `/edit` | pick an entry and fix/delete it |
+| `/cancel` | cancel the current dialog |
+| `/help` | help |
 
-## Технологии
+## Tech
 
 - Python 3.12
 - [python-telegram-bot](https://docs.python-telegram-bot.org) 21.x (async)
-- matplotlib — построение графиков
-- SQLite — хранение данных
-- Docker / docker-compose — деплой
+- matplotlib — chart rendering
+- SQLite — storage
+- Docker / docker-compose — deployment
 
-## Запуск
+## Running
 
-### 1. Токен
+### 1. Token
 
-Получи токен у [@BotFather](https://t.me/BotFather), скопируй пример конфига и
-вставь токен:
+Get a token from [@BotFather](https://t.me/BotFather), copy the example config and
+paste the token in:
 
 ```bash
 cp .env.example .env
-# отредактируй .env → BOT_TOKEN=...
+# edit .env → BOT_TOKEN=...
 ```
 
-### 2. Docker (рекомендуется)
+### 2. Docker (recommended)
 
 ```bash
 docker compose up -d --build
 docker compose logs -f
 ```
 
-База и фото сохраняются в локальную папку `./data` (она примонтирована в
-`/data` внутри контейнера) и переживают перезапуски.
+The database and photos are stored in the local `./data` folder (mounted to
+`/data` inside the container) and survive restarts.
 
-### 3. Локально без Docker
+### 3. Locally without Docker
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
@@ -97,23 +131,23 @@ export BOT_TOKEN=... DB_PATH=./data/cigarettes.db PHOTO_DIR=./data/photos
 python -m bot.main
 ```
 
-## Структура
+## Structure
 
 ```
 bot/
-  main.py     — хендлеры команд и запуск бота
-  db.py       — слой SQLite (пользователи, перекуры, фото)
-  charts.py   — отрисовка графиков (matplotlib)
+  main.py     — command handlers and bot startup
+  db.py       — SQLite layer (users, smoke breaks, photos)
+  charts.py   — chart rendering (matplotlib)
 Dockerfile
 docker-compose.yml
 requirements.txt
 .env.example
 ```
 
-## Данные
+## Data
 
-- `data/cigarettes.db` — база SQLite.
-- `data/photos/<user_id>/set_<id>.jpg` — фото перекуров.
+- `data/cigarettes.db` — the SQLite database.
+- `data/photos/<user_id>/set_<id>.jpg` — smoke-break photos.
 
-Папка `data/` и `.env` исключены из git (`.gitignore`) — токен и личные данные
-в репозиторий не попадают.
+The `data/` folder and `.env` are excluded from git (`.gitignore`) — the token and
+personal data never end up in the repository.

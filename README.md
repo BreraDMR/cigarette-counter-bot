@@ -2,7 +2,7 @@
 
 # 🚬 Cigarette Counter Bot
 
-**A Telegram bot that makes a smoking habit impossible to ignore — log every cigarette in two taps, then see the money, hours and trend going up in smoke, with a "who's calmest" leaderboard to push you down.**
+**A Telegram bot that makes a smoking habit impossible to ignore — one tap logs a cigarette, then see *when* you smoke most, the money going up in smoke, and a "who's calmest" leaderboard to push you down.**
 
 [![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white&style=for-the-badge)](requirements.txt)
 [![python-telegram-bot](https://img.shields.io/badge/python--telegram--bot-21.x%20async-2CA5E0?logo=telegram&logoColor=white&style=for-the-badge)](requirements.txt)
@@ -13,25 +13,28 @@
 </div>
 
 A Telegram bot that counts the cigarettes you smoke. It's fully interactive:
-everything is driven by **on-screen buttons** and step-by-step dialogs (the bot
-asks, you answer), so there's no syntax to memorize. See clean Excel-style charts,
-compete with others on a shared leaderboard (where **smoking less ranks you
+everything is driven by **on-screen buttons**, so there's no syntax to memorize.
+One break = one cigarette, logged in a single tap. See clean Excel-style charts
+of **when** you smoke, track real spending on **consumables** (tobacco, paper,
+filters or packs), compete on a shared leaderboard (where **smoking less ranks you
 higher**), and attach a photo to a smoke break. All data lives in SQLite, kept
 **separately per user**. Slash commands work too, as a shortcut.
 
 ## The problems it solves
 
-- **You can't quit what you don't measure.** Each smoke break — just a number — is
-  logged in a guided chat flow ("Log a break" → type how many you smoked), so the
-  record takes seconds and there's no app beyond Telegram to install.
-- **"A pack costs a bit" hides the real total.** The **"Burned"** view (`/money`)
-  turns your habit into concrete **money and hours lost**, with a per-day spending
-  chart. Pack price and size are set in **Settings**, so the numbers are yours.
-- **A raw count doesn't show whether you're winning.** The bot renders **charts**
-  (`matplotlib`): cigarettes per break, a per-day histogram with the record day
-  highlighted, and a cumulative total — plus a **Trend** view (`/trend`) comparing
-  this week to last (±%), and **Intervals** (`/intervals`): how long you've gone
-  without one, your longest streak, and the average gap between breaks.
+- **You can't quit what you don't measure.** One smoke break = one cigarette, and
+  the **"Smoke +1"** button logs it instantly — no number to type, no app beyond
+  Telegram to install. Logging takes a single tap.
+- **A raw count doesn't show your pattern.** All charts live under one **Stats**
+  menu: **when** you smoke most (by hour of day, with the peak highlighted), a
+  **weekday** breakdown (weekdays vs. weekends), a per-day dynamics histogram, a
+  cumulative total, **Intervals** (how long you've gone without one, longest break,
+  average gap), and a weekly **Trend** (±%). The point is *time*, not just totals.
+- **"A pack costs a bit" hides the real total — and not everyone smokes packs.**
+  The **Expenses** view tracks real **consumables**: tobacco, rolling paper,
+  filters, or a ready-made pack. You open a unit and record its price; when it runs
+  out you mark it done. The bot shows total spent, the price of a single cigarette,
+  and a "where the money went" breakdown by consumable.
 - **Willpower alone fades.** A reverse **leaderboard** (`/top`) ranks participants
   by cigarettes this week — **fewer is higher** — so the social pressure pushes you
   the right way instead of rewarding more.
@@ -44,27 +47,25 @@ higher**), and attach a photo to a smoke break. All data lives in SQLite, kept
 ## Features
 
 - **Registration with a name** — on the first `/start` the bot asks how to list you
-  on the leaderboard (changeable later via "Change name").
-- **Logging smoke breaks** — "Log a break" button: the bot asks how many cigarettes
-  you smoked and you type the number (or `/add 20`).
-- **Charts:**
-  - `/chart` — line chart of cigarettes per break;
-  - `/days` — per-day histogram (with the record day highlighted);
-  - `/total` — cumulative "total so far" chart.
-- **💸 Money & time** — "Burned" button (`/money`): money and hours gone up in
-  smoke, plus a per-day spending chart. Price and pack size are set in Settings.
-- **⏱ Intervals & streaks** — "Intervals" button (`/intervals`): how long you've
-  gone without smoking, your longest break, the average gap between breaks.
-- **📉 Trend** — "Trend" button (`/trend`): this week vs. last (±%).
-- **Stats** — `/today`, `/stats` (total, breaks, days, daily average, record,
-  money and time spent).
-- **Reverse leaderboard** — "Leaderboard" button (`/top`): "who's calmest" —
-  participants ranked by weekly count, **fewer is higher**.
-- **⚙️ Settings** — "Settings" button (`/settings`): currency, pack price and
-  cigarettes per pack (for the money math).
-- **Edit & delete** — "Edit entries" button: the bot shows your recent entries as
-  buttons; pick one, then "✏️ Change number" or "🗑 Delete entry" (delete with
-  confirmation). You can only edit your own entries; `/edit` works too.
+  on the leaderboard (changeable later in **⚙️ Settings**).
+- **🚬 Smoke +1** — one button logs one cigarette instantly, no questions asked.
+  One break = one cigarette. `/add` does the same.
+- **📊 Stats** — a single button opening a menu of cuts:
+  - 📋 numeric summary (total, breaks, days, daily average, record, peak hour);
+  - 🕐 **by hour of day** — when the urge hits most (peak highlighted);
+  - 📅 **by weekday** — weekdays vs. weekends;
+  - 📈 per-day dynamics histogram (record day highlighted);
+  - 🔥 cumulative total over time;
+  - ⏱ intervals — how long without one, longest break, average gap;
+  - 📉 weekly trend — this week vs. last (±%).
+- **💸 Expenses** — consumables tracking, not just packs: tobacco, paper, filters
+  or a ready-made pack. "🆕 Open a unit" records its price; "✅ Unit finished" marks
+  it done. The bot shows total spent, the price of one cigarette, and a "where the
+  money went" pie by consumable.
+- **🏆 Reverse leaderboard** (`/top`) — "who's calmest" this week, **fewer is higher**.
+- **✏️ Entries** — the bot shows recent entries as buttons; pick one, then
+  "✏️ Change number" or "🗑 Delete" (with confirmation). You can only edit your own.
+- **⚙️ Settings** — change your name and currency.
 - **Photos (optional)** — send a photo after a break and it's saved locally
   (`data/photos/<user_id>/`) and attached to the last entry.
 - **Multi-user** — data isolated per `user_id`.
@@ -76,19 +77,13 @@ Buttons are usually enough, but everything is available as a command too:
 | Command | Description |
 |---|---|
 | `/start` | register (asks your name) and open the main menu |
-| `/setname` | change your leaderboard name |
-| `/settings` | currency, pack price and pack size |
-| `/add` (or `/add 20`) | log a smoke break — asks for the number, or set it inline |
-| `/today` | how many cigarettes today |
-| `/money` | money and time gone up in smoke + spending chart |
-| `/intervals` | how long without one, breaks between |
-| `/trend` | this week vs. last |
-| `/total` | cumulative chart over all time |
-| `/chart` | cigarettes-per-break chart |
-| `/days` | per-day histogram |
-| `/stats` | numeric summary |
+| `/add` | log a smoke break (+1 cigarette) |
+| `/stats` | stats menu |
+| `/expenses` | expenses menu (consumables) |
 | `/top` | weekly leaderboard (fewer is higher) |
 | `/edit` | pick an entry and fix/delete it |
+| `/settings` | change your name and currency |
+| `/today` | how many cigarettes today |
 | `/cancel` | cancel the current dialog |
 | `/help` | help |
 
@@ -136,7 +131,7 @@ python -m bot.main
 ```
 bot/
   main.py     — command handlers and bot startup
-  db.py       — SQLite layer (users, smoke breaks, photos)
+  db.py       — SQLite layer (users, smoke breaks, consumables, photos)
   charts.py   — chart rendering (matplotlib)
 Dockerfile
 docker-compose.yml

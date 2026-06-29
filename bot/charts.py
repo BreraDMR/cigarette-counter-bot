@@ -121,6 +121,93 @@ def days_bar_chart(days: list[tuple[str, int]], title: str) -> io.BytesIO:
     return _finish(fig)
 
 
+def hours_chart(by_hour: list[int]) -> io.BytesIO:
+    """Гистограмма «в какое время суток чаще куришь» (24 столбика, по часам)."""
+    hours = list(range(24))
+    values = list(by_hour)
+
+    fig, ax = plt.subplots(figsize=(10, 5))
+    bars = ax.bar(hours, values, color=ACCENT, width=0.82, edgecolor="white")
+
+    if any(values):
+        peak = max(range(24), key=lambda i: values[i])
+        bars[peak].set_color(ACCENT2)
+        ax.annotate(f"пик в {peak:02d}:00",
+                    (peak, values[peak]), textcoords="offset points",
+                    xytext=(0, 8), ha="center", fontsize=10,
+                    fontweight="bold", color=ACCENT2)
+
+    ax.set_title("Когда ты куришь чаще всего", fontsize=15, fontweight="bold", pad=14)
+    ax.set_ylabel("Сигарет")
+    ax.set_xlabel("Час суток")
+    ax.set_xticks(range(0, 24, 2))
+    ax.set_xticklabels([f"{h:02d}" for h in range(0, 24, 2)])
+    ax.yaxis.set_major_locator(MaxNLocator(integer=True))
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.grid(axis="x", visible=False)
+    ax.margins(y=0.18)
+    return _finish(fig)
+
+
+def weekday_chart(by_weekday: list[int]) -> io.BytesIO:
+    """Гистограмма по дням недели (Пн…Вс)."""
+    labels = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+    values = list(by_weekday)
+
+    fig, ax = plt.subplots(figsize=(9, 5))
+    colors = [ACCENT] * 7
+    # выходные — другим цветом
+    colors[5] = colors[6] = "#7B61FF"
+    bars = ax.bar(labels, values, color=colors, width=0.66, edgecolor="white")
+
+    if any(values):
+        peak = max(range(7), key=lambda i: values[i])
+        bars[peak].set_color(ACCENT2)
+
+    for rect, v in zip(bars, values):
+        if v:
+            ax.annotate(str(v), (rect.get_x() + rect.get_width() / 2, rect.get_height()),
+                        textcoords="offset points", xytext=(0, 5), ha="center",
+                        fontsize=9, fontweight="bold")
+
+    ax.set_title("Сигареты по дням недели", fontsize=15, fontweight="bold", pad=14)
+    ax.set_ylabel("Сигарет")
+    ax.yaxis.set_major_locator(MaxNLocator(integer=True))
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.grid(axis="x", visible=False)
+    ax.margins(y=0.18)
+    return _finish(fig)
+
+
+def spend_by_kind_chart(items: list[tuple[str, float]], currency: str) -> io.BytesIO:
+    """Круговая диаграмма: на что ушли деньги (табак/бумага/фильтры/…)."""
+    labels = [k for k, _ in items]
+    values = [v for _, v in items]
+    palette = [ACCENT, ACCENT2, "#7B61FF", "#27AE60", "#C0392B", "#F1C40F"]
+    colors = [palette[i % len(palette)] for i in range(len(values))]
+
+    fig, ax = plt.subplots(figsize=(8, 6))
+    total = sum(values) or 1
+
+    def autopct(pct):
+        return f"{pct:.0f}%\n{pct / 100 * total:.0f} {currency}"
+
+    wedges, _texts, autotexts = ax.pie(
+        values, colors=colors, autopct=autopct, startangle=90,
+        wedgeprops=dict(width=0.42, edgecolor="white"), pctdistance=0.78,
+    )
+    for t in autotexts:
+        t.set_fontsize(9)
+        t.set_fontweight("bold")
+        t.set_color(TEXT)
+
+    ax.legend(wedges, labels, loc="center", frameon=False, fontsize=11)
+    ax.set_title(f"Куда ушли деньги — всего {total:.0f} {currency}",
+                 fontsize=15, fontweight="bold", pad=14)
+    ax.set(aspect="equal")
+    return _finish(fig)
+
+
 def money_bar_chart(days: list[tuple[str, float]], currency: str, title: str) -> io.BytesIO:
     """Гистограмма потраченных денег по дням."""
     labels = [datetime.fromisoformat(d).strftime("%d.%m") for d, _ in days]

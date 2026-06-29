@@ -1,11 +1,10 @@
 """Телеграм-бот «Счётчик сигарет» — интерактивный, с кнопками.
 
-Управление кнопками внизу экрана и пошаговыми диалогами: бот спрашивает —
-пользователь отвечает. Команды через «/» тоже работают как дубль.
-
-Подход без морализаторства: просто показываем правду в цифрах — сколько денег
-и времени «в дым», как давно не куришь (интервалы), и тренд неделя-к-неделе.
-Рейтинг — «у кого спокойнее» (меньше за неделю — выше). Данные в SQLite.
+Логика простая: одна сигарета = один перекур. Нажал «Перекур +1» — записал.
+Статистика спрятана под одной кнопкой, внутри — разные срезы (по часам суток,
+по дням недели, динамика, интервалы, тренд). Деньги считаются не «по пачке»,
+а по реальным расходникам: табак / бумага / фильтры / пачка сигарет — открыл
+упаковку (записал цену), кончилась — отметил. Данные в SQLite.
 """
 
 from __future__ import annotations
@@ -40,18 +39,21 @@ log = logging.getLogger("cigarette-bot")
 PHOTO_DIR = os.environ.get("PHOTO_DIR", "/data/photos")
 MIN_PER_CIG = 5  # средняя длительность одной сигареты, минут (для оценки времени)
 
-# ── Кнопки (подписи) ─────────────────────────────────────────────
-BTN_ADD = "🚬 Записать перекур"
-BTN_CHART = "📈 График"
-BTN_DAYS = "📊 По дням"
-BTN_MONEY = "💸 Сожжено"
-BTN_INTERVALS = "⏱ Интервалы"
-BTN_TREND = "📉 Тренд"
-BTN_STATS = "📋 Статистика"
+# ── Типы расходников ─────────────────────────────────────────────
+KINDS = {
+    "tobacco": "🌿 Табак",
+    "paper": "📄 Бумага",
+    "filters": "⚪️ Фильтры",
+    "cigs": "🚬 Пачка сигарет",
+}
+
+# ── Кнопки главного меню (подписи) ───────────────────────────────
+BTN_ADD = "🚬 Перекур +1"
+BTN_STATS = "📊 Статистика"
+BTN_EXPENSES = "💸 Расходы"
 BTN_TOP = "🏆 Рейтинг"
-BTN_EDIT = "✏️ Изменить записи"
+BTN_EDIT = "✏️ Записи"
 BTN_SETTINGS = "⚙️ Настройки"
-BTN_NAME = "🙍 Сменить имя"
 BTN_HELP = "ℹ️ Помощь"
 BTN_CANCEL = "❌ Отмена"
 BTN_SKIP = "⏭ Пропустить"
@@ -59,46 +61,50 @@ BTN_SKIP = "⏭ Пропустить"
 MAIN_KB = ReplyKeyboardMarkup(
     [
         [BTN_ADD],
-        [BTN_CHART, BTN_DAYS],
-        [BTN_MONEY, BTN_INTERVALS],
-        [BTN_TREND, BTN_STATS],
+        [BTN_STATS, BTN_EXPENSES],
         [BTN_TOP, BTN_EDIT],
-        [BTN_SETTINGS, BTN_NAME],
-        [BTN_HELP],
+        [BTN_SETTINGS, BTN_HELP],
     ],
     resize_keyboard=True,
 )
 CANCEL_KB = ReplyKeyboardMarkup([[BTN_CANCEL]], resize_keyboard=True)
 SKIP_KB = ReplyKeyboardMarkup([[BTN_SKIP]], resize_keyboard=True)
-CUR_KB = ReplyKeyboardMarkup([["грн", "₽"], ["$", "€"], [BTN_CANCEL]], resize_keyboard=True)
-PACK_KB = ReplyKeyboardMarkup([["20"], [BTN_CANCEL]], resize_keyboard=True)
+
+# Инлайн-меню статистики
+STATS_MENU = InlineKeyboardMarkup(
+    [
+        [InlineKeyboardButton("📋 Сводка", callback_data="st:summary")],
+        [InlineKeyboardButton("🕐 По часам суток", callback_data="st:hours"),
+         InlineKeyboardButton("📅 По дням недели", callback_data="st:weekday")],
+        [InlineKeyboardButton("📈 Динамика по дням", callback_data="st:days"),
+         InlineKeyboardButton("🔥 Накопительно", callback_data="st:cumul")],
+        [InlineKeyboardButton("⏱ Интервалы", callback_data="st:intervals"),
+         InlineKeyboardButton("📉 Тренд по неделям", callback_data="st:trend")],
+    ]
+)
 
 # ── Состояния диалогов ───────────────────────────────────────────
-ADD_COUNT, NAME, EDIT_VALUE, SET_CUR, SET_PRICE, SET_PACK = range(6)
+NAME, EDIT_VALUE, EX_PRICE = range(3)
 
 HELP = (
     "🚬 <b>Счётчик сигарет</b>\n\n"
     "Пользуйся кнопками внизу 👇\n\n"
-    "• <b>Записать перекур</b> — бот спросит, сколько сигарет ты выкурил\n"
-    "• <b>График</b> — линейный график по перекурам\n"
-    "• <b>По дням</b> — гистограмма: сколько в какой день\n"
-    "• <b>Сожжено</b> 💸 — сколько денег и времени ушло «в дым»\n"
-    "• <b>Интервалы</b> ⏱ — как давно не куришь, самый длинный перерыв\n"
-    "• <b>Тренд</b> 📉 — эта неделя против прошлой (±%)\n"
-    "• <b>Статистика</b> — сводка цифрами\n"
-    "• <b>Рейтинг</b> — у кого спокойнее за неделю (меньше — выше)\n"
-    "• <b>Изменить записи</b> — выбрать запись и исправить/удалить\n"
-    "• <b>Настройки</b> ⚙️ — цена и размер пачки (для подсчёта денег)\n"
-    "• <b>Сменить имя</b> — как тебя показывать в рейтинге\n\n"
-    "📷 После перекура можешь прислать фото — оно сохранится и привяжется "
-    "к последней записи."
+    "• <b>🚬 Перекур +1</b> — записывает одну сигарету. Один перекур = одна сигарета.\n"
+    "• <b>📊 Статистика</b> — всё в одном меню: сводка, по часам суток "
+    "(когда тянет чаще), по дням недели, динамика, интервалы, тренд.\n"
+    "• <b>💸 Расходы</b> — учёт расходников: табак, бумага, фильтры или пачка "
+    "сигарет. Открыл упаковку — записал цену; кончилась — отметил. Бот посчитает, "
+    "сколько денег ушло «в дым» и куда именно.\n"
+    "• <b>🏆 Рейтинг</b> — у кого спокойнее за неделю (меньше — выше).\n"
+    "• <b>✏️ Записи</b> — поправить или удалить запись.\n"
+    "• <b>⚙️ Настройки</b> — сменить имя и валюту.\n\n"
+    "📷 После перекура можешь прислать фото — оно привяжется к последней записи."
 )
 
 
 # ── Вспомогательные функции ──────────────────────────────────────
 def week_bounds(offset: int = 0) -> tuple[str, str]:
-    """Границы ISO-недели [понедельник, следующий понедельник) как YYYY-MM-DD.
-    offset=0 — текущая неделя, 1 — прошлая и т.д."""
+    """Границы ISO-недели [понедельник, следующий понедельник) как YYYY-MM-DD."""
     today = date.today()
     monday = today - timedelta(days=today.weekday()) - timedelta(weeks=offset)
     return monday.isoformat(), (monday + timedelta(days=7)).isoformat()
@@ -123,6 +129,10 @@ def fmt_duration(td: timedelta) -> str:
     return f"{m} мин"
 
 
+def user_currency(user_id: int) -> str:
+    return db.get_settings(user_id)["currency"]
+
+
 # ── Регистрация / смена имени ────────────────────────────────────
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u = update.effective_user
@@ -130,7 +140,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db.upsert_user(u.id, u.username, u.first_name)
     if is_new:
         await update.message.reply_html(
-            "Привет! 👋 Я считаю твои сигареты.\n\n"
+            "Привет! 👋 Я считаю твои сигареты. Один перекур — одна сигарета.\n\n"
             "Как тебя записать в рейтинге? Напиши имя "
             "или нажми «Пропустить», чтобы оставить имя из Telegram.",
             reply_markup=SKIP_KB,
@@ -155,13 +165,27 @@ async def setname_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return NAME
 
 
+async def setname_from_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    u = query.from_user
+    db.upsert_user(u.id, u.username, u.first_name)
+    current = db.get_display_name(u.id) or u.first_name
+    await query.message.reply_html(
+        f"Сейчас ты записан как <b>{current}</b>.\n"
+        "Напиши новое имя или нажми «Пропустить».",
+        reply_markup=SKIP_KB,
+    )
+    return NAME
+
+
 async def name_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u = update.effective_user
     text = (update.message.text or "").strip()
     if text == BTN_SKIP:
         name = db.get_display_name(u.id) or u.first_name
         await update.message.reply_html(
-            f"Ок, оставил имя <b>{name}</b>. 👍\n\n{HELP}", reply_markup=MAIN_KB
+            f"Ок, оставил имя <b>{name}</b>. 👍", reply_markup=MAIN_KB
         )
         return ConversationHandler.END
     if not text or len(text) > 32:
@@ -172,55 +196,357 @@ async def name_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return NAME
     db.set_display_name(u.id, text)
     await update.message.reply_html(
-        f"Готово! Теперь ты — <b>{text}</b>. 🎉\n\n{HELP}", reply_markup=MAIN_KB
+        f"Готово! Теперь ты — <b>{text}</b>. 🎉", reply_markup=MAIN_KB
     )
     return ConversationHandler.END
 
 
-# ── Добавление перекура (диалог) ──────────────────────────────────
-async def add_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ── Перекур: просто +1 ────────────────────────────────────────────
+async def add_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u = update.effective_user
     db.upsert_user(u.id, u.username, u.first_name)
-    await update.message.reply_html(
-        "Сколько сигарет ты выкурил за этот перекур? 🚬\nНапиши число:",
-        reply_markup=CANCEL_KB,
-    )
-    return ADD_COUNT
-
-
-async def add_count(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    u = update.effective_user
-    text = (update.message.text or "").strip()
-    if text == BTN_CANCEL:
-        return await cancel(update, context)
-    try:
-        count = int(text)
-    except ValueError:
-        await update.message.reply_text(
-            "Это не число 🤔 Напиши, сколько раз выкурил (например, 20), "
-            "или нажми «Отмена».",
-            reply_markup=CANCEL_KB,
-        )
-        return ADD_COUNT
-    if count <= 0 or count > 10000:
-        await update.message.reply_text(
-            "Введи разумное число от 1 до 10000.", reply_markup=CANCEL_KB
-        )
-        return ADD_COUNT
-
-    db.add_set(u.id, count)
+    db.add_set(u.id, 1)
     total = db.total_count(u.id)
     today = db.today_count(u.id)
+    now = datetime.now().strftime("%H:%M")
     await update.message.reply_html(
-        f"✅ Записал перекур: <b>{count}</b>\n"
+        f"✅ Перекур записан в {now} 🚬\n"
         f"Сегодня: <b>{today}</b>  ·  Всего: <b>{total}</b>\n"
         f"📷 Можешь прислать фото к этому перекуру.",
         reply_markup=MAIN_KB,
     )
+
+
+# ── Статистика (одна кнопка → меню) ──────────────────────────────
+async def stats_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_html(
+        "📊 <b>Статистика</b>\nЧто показать?", reply_markup=STATS_MENU
+    )
+
+
+async def stats_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    u = query.from_user
+    what = query.data.split(":", 1)[1]
+    msg = query.message
+
+    total = db.total_count(u.id)
+    if total == 0:
+        await msg.reply_text(
+            "Пока нет данных. Нажми «🚬 Перекур +1» 🚬", reply_markup=MAIN_KB
+        )
+        return
+
+    if what == "summary":
+        await _send_summary(msg, u.id)
+    elif what == "hours":
+        img = charts.hours_chart(db.by_hour(u.id))
+        await msg.reply_photo(img, caption="🕐 В какое время суток тянет чаще")
+    elif what == "weekday":
+        img = charts.weekday_chart(db.by_weekday(u.id))
+        await msg.reply_photo(img, caption="📅 По дням недели")
+    elif what == "days":
+        img = charts.days_bar_chart(db.per_day(u.id), "Сигареты по дням")
+        await msg.reply_photo(img, caption="📈 Сколько в какой день")
+    elif what == "cumul":
+        img = charts.cumulative_chart(db.sessions(u.id), total)
+        await msg.reply_photo(img, caption=f"🔥 Всего сигарет: {total}")
+    elif what == "intervals":
+        await _send_intervals(msg, u.id)
+    elif what == "trend":
+        await _send_trend(msg, u.id)
+
+
+async def _send_summary(msg, user_id: int):
+    total = db.total_count(user_id)
+    n = db.sets_count(user_id)
+    days = db.per_day(user_id)
+    per_day_avg = round(total / len(days), 1) if days else 0
+    best = max((v for _, v in days), default=0)
+    hrs = db.by_hour(user_id)
+    peak_h = max(range(24), key=lambda i: hrs[i]) if any(hrs) else None
+
+    lines = [
+        "📋 <b>Сводка</b>",
+        f"Всего сигарет: <b>{total}</b>",
+        f"Перекуров: <b>{n}</b>",
+        f"Дней с курением: <b>{len(days)}</b>",
+        f"В среднем за день: <b>{per_day_avg}</b>",
+        f"Больше всего за день: <b>{best}</b>",
+    ]
+    if peak_h is not None:
+        lines.append(f"Чаще всего куришь около <b>{peak_h:02d}:00</b>")
+
+    spent = db.total_spent(user_id)
+    cur = user_currency(user_id)
+    if spent > 0:
+        lines.append(f"💸 Потрачено на расходники: <b>{fmt_money(spent, cur)}</b>")
+    lines.append(
+        f"⏱ Времени «в дым»: <b>{fmt_duration(timedelta(minutes=total * MIN_PER_CIG))}</b>"
+    )
+    await msg.reply_html("\n".join(lines), reply_markup=MAIN_KB)
+
+
+async def _send_intervals(msg, user_id: int):
+    sess = db.sessions(user_id)
+    times = [datetime.fromisoformat(ts) for ts, _ in sess]
+    now = datetime.now()
+    since_last = now - times[-1]
+    lines = [
+        "⏱ <b>Интервалы</b>",
+        f"Не куришь уже: <b>{fmt_duration(since_last)}</b>",
+    ]
+    if len(times) >= 2:
+        diffs = [times[i + 1] - times[i] for i in range(len(times) - 1)]
+        longest = max(diffs)
+        avg = sum(diffs, timedelta()) / len(diffs)
+        lines.append(f"Самый длинный перерыв: <b>{fmt_duration(longest)}</b>")
+        lines.append(f"В среднем между перекурами: <b>{fmt_duration(avg)}</b>")
+    else:
+        lines.append("<i>Сделай ещё пару записей — покажу перерывы и средний интервал.</i>")
+    await msg.reply_html("\n".join(lines), reply_markup=MAIN_KB)
+
+
+async def _send_trend(msg, user_id: int):
+    this = db.range_total(user_id, *week_bounds(0))
+    last = db.range_total(user_id, *week_bounds(1))
+    if this == 0 and last == 0:
+        await msg.reply_text("Пока нет данных за последние две недели 🙂", reply_markup=MAIN_KB)
+        return
+    if last == 0:
+        verdict = "📈 На прошлой неделе записей не было — не с чем сравнить."
+    else:
+        diff = this - last
+        pct = diff / last * 100
+        if diff < 0:
+            verdict = f"📉 Меньше на <b>{-pct:.0f}%</b> ({diff} шт). Так держать! 👏"
+        elif diff > 0:
+            verdict = f"📈 Больше на <b>{pct:.0f}%</b> (+{diff} шт)."
+        else:
+            verdict = "➖ Столько же, что и на прошлой неделе."
+    await msg.reply_html(
+        f"📉 <b>Тренд по неделям</b>\n"
+        f"Эта неделя: <b>{this}</b> сигарет\n"
+        f"Прошлая неделя: <b>{last}</b> сигарет\n\n{verdict}",
+        reply_markup=MAIN_KB,
+    )
+
+
+# ── Расходы (расходники) ─────────────────────────────────────────
+def expenses_menu_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("🆕 Открыть упаковку", callback_data="ex:new")],
+            [InlineKeyboardButton("✅ Упаковка кончилась", callback_data="ex:close")],
+            [InlineKeyboardButton("📊 Куда ушли деньги", callback_data="ex:chart")],
+        ]
+    )
+
+
+def _expenses_text(user_id: int) -> str:
+    cur = user_currency(user_id)
+    spent = db.total_spent(user_id)
+    total_cigs = db.total_count(user_id)
+    lines = ["💸 <b>Расходы</b>"]
+    open_items = db.open_consumables(user_id)
+    if open_items:
+        lines.append("\nСейчас открыто:")
+        for kind, price, c, _ in open_items:
+            lines.append(f"• {KINDS.get(kind, kind)} — {fmt_money(price, c or cur)}")
+    else:
+        lines.append("\n<i>Открытых упаковок нет.</i>")
+    if spent > 0:
+        lines.append(f"\nВсего потрачено: <b>{fmt_money(spent, cur)}</b>")
+        if total_cigs:
+            lines.append(f"Цена одной сигареты ≈ <b>{fmt_money(spent / total_cigs, cur)}</b>")
+    else:
+        lines.append("\n<i>Открой первую упаковку и запиши её цену — начну считать деньги.</i>")
+    return "\n".join(lines)
+
+
+async def expenses_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    u = update.effective_user
+    db.upsert_user(u.id, u.username, u.first_name)
+    await update.message.reply_html(
+        _expenses_text(u.id), reply_markup=expenses_menu_kb()
+    )
+
+
+def _kind_kb(prefix: str, kinds: list[str]) -> InlineKeyboardMarkup:
+    rows = [[InlineKeyboardButton(KINDS[k], callback_data=f"{prefix}:{k}")] for k in kinds]
+    return InlineKeyboardMarkup(rows)
+
+
+async def expenses_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Кнопки меню расходов, КРОМЕ «открыть» (та — отдельный диалог)."""
+    query = update.callback_query
+    await query.answer()
+    u = query.from_user
+    action = query.data.split(":", 1)[1]
+
+    if action == "close":
+        open_items = db.open_consumables(u.id)
+        if not open_items:
+            await query.edit_message_text("Сейчас нет открытых упаковок 🤷")
+            await query.message.reply_text("Главное меню 👇", reply_markup=MAIN_KB)
+            return
+        kinds = [k for k, *_ in open_items]
+        await query.edit_message_text(
+            "Какая упаковка закончилась?", reply_markup=_kind_kb("exclose", kinds)
+        )
+    elif action == "chart":
+        by_kind = db.spent_by_kind(u.id)
+        if not by_kind:
+            await query.message.reply_text(
+                "Пока нет трат. Открой упаковку и запиши цену 💸", reply_markup=MAIN_KB
+            )
+            return
+        cur = user_currency(u.id)
+        items = [(KINDS.get(k, k), total) for k, total, _ in by_kind]
+        img = charts.spend_by_kind_chart(items, cur)
+        await query.message.reply_photo(img, caption="💸 Куда ушли деньги")
+
+
+async def expenses_close_kind(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    u = query.from_user
+    kind = query.data.split(":", 1)[1]
+    ok = db.close_consumable(u.id, kind)
+    label = KINDS.get(kind, kind)
+    if ok:
+        await query.edit_message_text(f"✅ Отметил: {label} закончилась.")
+    else:
+        await query.edit_message_text(f"{label} и так не была открыта 🤷")
+    await query.message.reply_html(_expenses_text(u.id), reply_markup=expenses_menu_kb())
+
+
+# ── Открытие упаковки (диалог: тип → цена) ───────────────────────
+async def expenses_new_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text(
+        "Что открываешь?", reply_markup=_kind_kb("exnew", list(KINDS.keys()))
+    )
+    return EX_PRICE  # ждём выбор типа (кнопка), потом цену
+
+
+async def expenses_new_kind(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    u = query.from_user
+    kind = query.data.split(":", 1)[1]
+    context.user_data["ex_kind"] = kind
+    cur = user_currency(u.id)
+    await query.edit_message_text(
+        f"{KINDS[kind]} — сколько стоит упаковка? Напиши число (в {cur}):"
+    )
+    await query.message.reply_text("…или нажми «Отмена».", reply_markup=CANCEL_KB)
+    return EX_PRICE
+
+
+async def expenses_new_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    u = update.effective_user
+    text = (update.message.text or "").strip().replace(",", ".")
+    if text == BTN_CANCEL.replace(",", "."):
+        return await cancel(update, context)
+    kind = context.user_data.get("ex_kind")
+    if not kind:
+        await update.message.reply_text(
+            "Сначала выбери тип кнопкой выше 👆 или нажми «Отмена».",
+            reply_markup=CANCEL_KB,
+        )
+        return EX_PRICE
+    try:
+        price = float(text)
+    except ValueError:
+        await update.message.reply_text(
+            "Это не число. Напиши цену упаковки, например 120.", reply_markup=CANCEL_KB
+        )
+        return EX_PRICE
+    if price <= 0 or price > 1_000_000:
+        await update.message.reply_text("Введи разумную цену.", reply_markup=CANCEL_KB)
+        return EX_PRICE
+
+    cur = user_currency(u.id)
+    db.open_consumable(u.id, kind, price, cur)
+    context.user_data.pop("ex_kind", None)
+    await update.message.reply_html(
+        f"✅ Открыл: {KINDS[kind]} за {fmt_money(price, cur)}.\n"
+        "Кончится — загляни в «💸 Расходы» и нажми «Упаковка кончилась».",
+        reply_markup=MAIN_KB,
+    )
+    await update.message.reply_html(_expenses_text(u.id), reply_markup=expenses_menu_kb())
     return ConversationHandler.END
 
 
-# ── Редактирование (диалог: выбор кнопкой → новое значение) ───────
+# ── Настройки (имя + валюта) ─────────────────────────────────────
+def settings_menu_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("🙍 Сменить имя", callback_data="se:name")],
+            [InlineKeyboardButton("💱 Валюта", callback_data="se:cur")],
+        ]
+    )
+
+
+async def settings_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    u = update.effective_user
+    db.upsert_user(u.id, u.username, u.first_name)
+    name = db.get_display_name(u.id) or u.first_name
+    cur = user_currency(u.id)
+    await update.message.reply_html(
+        f"⚙️ <b>Настройки</b>\nИмя: <b>{name}</b>\nВалюта: <b>{cur}</b>",
+        reply_markup=settings_menu_kb(),
+    )
+
+
+async def settings_currency_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    kb = InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("грн", callback_data="secur:грн"),
+             InlineKeyboardButton("₽", callback_data="secur:₽")],
+            [InlineKeyboardButton("$", callback_data="secur:$"),
+             InlineKeyboardButton("€", callback_data="secur:€")],
+            [InlineKeyboardButton("zł", callback_data="secur:zł"),
+             InlineKeyboardButton("₸", callback_data="secur:₸")],
+        ]
+    )
+    await query.edit_message_text("Выбери валюту:", reply_markup=kb)
+
+
+async def settings_currency_set(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    u = query.from_user
+    cur = query.data.split(":", 1)[1]
+    db.set_currency(u.id, cur)
+    await query.edit_message_text(f"✅ Валюта: {cur}")
+    await query.message.reply_text("Главное меню 👇", reply_markup=MAIN_KB)
+
+
+# ── Рейтинг ──────────────────────────────────────────────────────
+async def top_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    board = db.leaderboard_week(*week_bounds(0))
+    if not board:
+        await update.message.reply_text("Пока никто ничего не записал 🙂", reply_markup=MAIN_KB)
+        return
+    medals = ["🥇", "🥈", "🥉"]
+    lines = [
+        "🏆 <b>Рейтинг за эту неделю</b>",
+        "<i>у кого спокойнее (меньше — выше)</i>",
+        "",
+    ]
+    for i, (name, week) in enumerate(board):
+        mark = medals[i] if i < 3 else f"{i + 1}."
+        lines.append(f"{mark} <b>{name}</b> — {week} за неделю")
+    await update.message.reply_html("\n".join(lines), reply_markup=MAIN_KB)
+
+
+# ── Редактирование записей ───────────────────────────────────────
 async def edit_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u = update.effective_user
     rows = db.recent_sets(u.id, limit=10)
@@ -233,31 +559,23 @@ async def edit_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     buttons = []
     for set_id, ts, count in rows:
         when = ts.replace("T", " ")[5:16]  # MM-DD HH:MM
-        buttons.append(
-            [InlineKeyboardButton(f"№{set_id} · {when} · {count} раз",
-                                  callback_data=f"pick:{set_id}:{count}")]
-        )
+        label = f"№{set_id} · {when}" + (f" · {count} шт" if count != 1 else "")
+        buttons.append([InlineKeyboardButton(label, callback_data=f"pick:{set_id}:{count}")])
     await update.message.reply_text(
-        "Какую запись изменить? Выбери её:",
-        reply_markup=InlineKeyboardMarkup(buttons),
+        "Какую запись изменить? Выбери её:", reply_markup=InlineKeyboardMarkup(buttons)
     )
-    await update.message.reply_text(
-        "…или нажми «Отмена».", reply_markup=CANCEL_KB
-    )
-    return EDIT_VALUE  # ждём либо нажатие кнопки, либо отмену
+    await update.message.reply_text("…или нажми «Отмена».", reply_markup=CANCEL_KB)
+    return EDIT_VALUE
 
 
 async def edit_picked(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Запись выбрана — предлагаем: изменить число или удалить целиком."""
     query = update.callback_query
     await query.answer()
     _, set_id, count = query.data.split(":")
     set_id = int(set_id)
-
     if db.set_owner(set_id) != query.from_user.id:
         await query.edit_message_text("Это не твоя запись 🙅")
         return ConversationHandler.END
-
     context.user_data["edit_id"] = set_id
     kb = InlineKeyboardMarkup(
         [
@@ -266,25 +584,23 @@ async def edit_picked(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
     )
     await query.edit_message_text(
-        f"Запись №{set_id} (сейчас: {count} раз). Что сделать?", reply_markup=kb
+        f"Запись №{set_id} (сейчас: {count} шт). Что сделать?", reply_markup=kb
     )
     return EDIT_VALUE
 
 
 async def edit_change(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Нажали «Изменить число» — просим новое значение."""
     query = update.callback_query
     await query.answer()
     _, set_id, count = query.data.split(":")
     context.user_data["edit_id"] = int(set_id)
     await query.edit_message_text(
-        f"Запись №{set_id} (сейчас: {count} раз).\nНапиши новое число:"
+        f"Запись №{set_id} (сейчас: {count} шт).\nНапиши новое число:"
     )
     return EDIT_VALUE
 
 
 async def edit_delete_ask(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Нажали «Удалить» — спрашиваем подтверждение."""
     query = update.callback_query
     await query.answer()
     set_id = int(query.data.split(":")[1])
@@ -294,9 +610,7 @@ async def edit_delete_ask(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("↩️ Нет, оставить", callback_data="delno")],
         ]
     )
-    await query.edit_message_text(
-        f"Точно удалить запись №{set_id} целиком?", reply_markup=kb
-    )
+    await query.edit_message_text(f"Точно удалить запись №{set_id}?", reply_markup=kb)
     return EDIT_VALUE
 
 
@@ -311,8 +625,7 @@ async def edit_delete_ok(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.pop("edit_id", None)
     await query.edit_message_text(f"🗑 Запись №{set_id} удалена.")
     await query.message.reply_html(
-        f"Всего теперь: <b>{db.total_count(query.from_user.id)}</b>",
-        reply_markup=MAIN_KB,
+        f"Всего теперь: <b>{db.total_count(query.from_user.id)}</b>", reply_markup=MAIN_KB
     )
     return ConversationHandler.END
 
@@ -331,21 +644,17 @@ async def edit_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (update.message.text or "").strip().lower()
     if text == BTN_CANCEL.lower():
         return await cancel(update, context)
-
     set_id = context.user_data.get("edit_id")
     if set_id is None:
-        # пользователь написал текст, не выбрав запись кнопкой
         await update.message.reply_text(
             "Сначала выбери запись кнопкой выше 👆 или нажми «Отмена».",
             reply_markup=CANCEL_KB,
         )
         return EDIT_VALUE
-
     if db.set_owner(set_id) != u.id:
         await update.message.reply_text("Это не твоя запись 🙅", reply_markup=MAIN_KB)
         context.user_data.pop("edit_id", None)
         return ConversationHandler.END
-
     if text in ("удалить", "удали", "delete"):
         db.delete_set(set_id)
         context.user_data.pop("edit_id", None)
@@ -354,7 +663,6 @@ async def edit_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=MAIN_KB,
         )
         return ConversationHandler.END
-
     try:
         count = int(text)
     except ValueError:
@@ -367,7 +675,6 @@ async def edit_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Введи разумное число от 1 до 10000.", reply_markup=CANCEL_KB
         )
         return EDIT_VALUE
-
     db.edit_set(set_id, count)
     context.user_data.pop("edit_id", None)
     await update.message.reply_html(
@@ -380,11 +687,12 @@ async def edit_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.pop("edit_id", None)
+    context.user_data.pop("ex_kind", None)
     await update.message.reply_text("Отменил. 👌", reply_markup=MAIN_KB)
     return ConversationHandler.END
 
 
-# ── Информационные действия (кнопки и команды) ───────────────────
+# ── Прочее ───────────────────────────────────────────────────────
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_html(HELP, reply_markup=MAIN_KB)
 
@@ -392,261 +700,8 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def today_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u = update.effective_user
     await update.message.reply_html(
-        f"Сегодня ты выкурил <b>{db.today_count(u.id)}</b> раз 🚬",
-        reply_markup=MAIN_KB,
+        f"Сегодня ты выкурил <b>{db.today_count(u.id)}</b> раз 🚬", reply_markup=MAIN_KB
     )
-
-
-async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    u = update.effective_user
-    total = db.total_count(u.id)
-    n = db.sets_count(u.id)
-    days = db.per_day(u.id)
-    avg = round(total / n, 1) if n else 0
-    best = max((v for _, v in days), default=0)
-    per_day_avg = round(total / len(days), 1) if days else 0
-
-    lines = [
-        "📊 <b>Статистика</b>",
-        f"Всего сигарет: <b>{total}</b>",
-        f"Перекуров: <b>{n}</b>",
-        f"Дней с курением: <b>{len(days)}</b>",
-        f"В среднем за день: <b>{per_day_avg}</b>",
-        f"Больше всего за день: <b>{best}</b>",
-    ]
-
-    s = db.get_settings(u.id)
-    if s["price_per_pack"]:
-        cost = s["price_per_pack"] / s["pack_size"]
-        lines.append(f"💸 Потрачено всего: <b>{fmt_money(total * cost, s['currency'])}</b>")
-    lines.append(f"⏱ Времени «в дым»: <b>{fmt_duration(timedelta(minutes=total * MIN_PER_CIG))}</b>")
-
-    await update.message.reply_html("\n".join(lines), reply_markup=MAIN_KB)
-
-
-async def chart_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    u = update.effective_user
-    data = db.sessions(u.id)
-    if not data:
-        await update.message.reply_text(
-            "Пока нет данных. Нажми «Записать перекур» 🚬", reply_markup=MAIN_KB
-        )
-        return
-    img = charts.line_chart(data, "График сигарет по перекурам")
-    await update.message.reply_photo(img, caption="Твои перекуры 📈")
-
-
-async def total_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    u = update.effective_user
-    data = db.sessions(u.id)
-    total = db.total_count(u.id)
-    if not data:
-        await update.message.reply_text(
-            "Пока нет данных. Нажми «Записать перекур» 🚬", reply_markup=MAIN_KB
-        )
-        return
-    img = charts.cumulative_chart(data, total)
-    await update.message.reply_photo(img, caption=f"Всего сигарет: {total} 🔥")
-
-
-async def days_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    u = update.effective_user
-    data = db.per_day(u.id)
-    if not data:
-        await update.message.reply_text(
-            "Пока нет данных. Нажми «Записать перекур» 🚬", reply_markup=MAIN_KB
-        )
-        return
-    img = charts.days_bar_chart(data, "Сигареты по дням")
-    await update.message.reply_photo(img, caption="Сколько в какой день 📊")
-
-
-async def money_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    u = update.effective_user
-    s = db.get_settings(u.id)
-    total = db.total_count(u.id)
-    if total == 0:
-        await update.message.reply_text(
-            "Пока нет данных. Нажми «Записать перекур» 🚬", reply_markup=MAIN_KB
-        )
-        return
-    time_lost = fmt_duration(timedelta(minutes=total * MIN_PER_CIG))
-
-    if not s["price_per_pack"]:
-        await update.message.reply_html(
-            f"⏱ Времени «в дым»: <b>{time_lost}</b> ({total} шт по ~{MIN_PER_CIG} мин)\n\n"
-            "💸 Чтобы считать деньги, задай цену пачки в «⚙️ Настройки».",
-            reply_markup=MAIN_KB,
-        )
-        return
-
-    cost = s["price_per_pack"] / s["pack_size"]
-    days = db.per_day(u.id)
-    days_money = [(d, cnt * cost) for d, cnt in days]
-    img = charts.money_bar_chart(days_money, s["currency"], "Деньги «в дым» по дням")
-    await update.message.reply_photo(
-        img,
-        caption=(
-            f"💸 Всего сожжено: {fmt_money(total * cost, s['currency'])}\n"
-            f"🚬 Сигарет: {total} (≈{total / s['pack_size']:.1f} пачек)\n"
-            f"⏱ Времени: {time_lost}"
-        ),
-    )
-
-
-async def intervals_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    u = update.effective_user
-    sess = db.sessions(u.id)
-    if not sess:
-        await update.message.reply_text(
-            "Пока нет данных. Нажми «Записать перекур» 🚬", reply_markup=MAIN_KB
-        )
-        return
-    times = [datetime.fromisoformat(ts) for ts, _ in sess]
-    now = datetime.now()
-    since_last = now - times[-1]
-
-    lines = [
-        "⏱ <b>Интервалы</b>",
-        f"Не куришь уже: <b>{fmt_duration(since_last)}</b>",
-    ]
-    if len(times) >= 2:
-        diffs = [times[i + 1] - times[i] for i in range(len(times) - 1)]
-        longest = max(diffs)
-        avg = sum(diffs, timedelta()) / len(diffs)
-        lines.append(f"Самый длинный перерыв: <b>{fmt_duration(longest)}</b>")
-        lines.append(f"В среднем между перекурами: <b>{fmt_duration(avg)}</b>")
-    else:
-        lines.append("<i>Сделай ещё пару записей — покажу перерывы и средний интервал.</i>")
-    await update.message.reply_html("\n".join(lines), reply_markup=MAIN_KB)
-
-
-async def trend_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    u = update.effective_user
-    this = db.range_total(u.id, *week_bounds(0))
-    last = db.range_total(u.id, *week_bounds(1))
-
-    if this == 0 and last == 0:
-        await update.message.reply_text(
-            "Пока нет данных за последние две недели 🙂", reply_markup=MAIN_KB
-        )
-        return
-
-    if last == 0:
-        verdict = "📈 На прошлой неделе записей не было — не с чем сравнить."
-    else:
-        diff = this - last
-        pct = diff / last * 100
-        if diff < 0:
-            verdict = f"📉 Меньше на <b>{-pct:.0f}%</b> ({diff} шт). Так держать! 👏"
-        elif diff > 0:
-            verdict = f"📈 Больше на <b>{pct:.0f}%</b> (+{diff} шт)."
-        else:
-            verdict = "➖ Столько же, что и на прошлой неделе."
-
-    await update.message.reply_html(
-        f"📊 <b>Тренд по неделям</b>\n"
-        f"Эта неделя: <b>{this}</b> сигарет\n"
-        f"Прошлая неделя: <b>{last}</b> сигарет\n\n{verdict}",
-        reply_markup=MAIN_KB,
-    )
-
-
-async def top_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    board = db.leaderboard_week(*week_bounds(0))
-    if not board:
-        await update.message.reply_text(
-            "Пока никто ничего не записал 🙂", reply_markup=MAIN_KB
-        )
-        return
-    medals = ["🥇", "🥈", "🥉"]
-    lines = [
-        "🏆 <b>Рейтинг за эту неделю</b>",
-        "<i>у кого спокойнее (меньше — выше)</i>",
-        "",
-    ]
-    for i, (name, week) in enumerate(board):
-        mark = medals[i] if i < 3 else f"{i + 1}."
-        lines.append(f"{mark} <b>{name}</b> — {week} за неделю")
-    await update.message.reply_html("\n".join(lines), reply_markup=MAIN_KB)
-
-
-# ── Настройки стоимости (диалог) ─────────────────────────────────
-async def settings_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    u = update.effective_user
-    db.upsert_user(u.id, u.username, u.first_name)
-    s = db.get_settings(u.id)
-    cur = s["currency"]
-    now = (
-        f"Сейчас: пачка {fmt_money(s['price_per_pack'], cur)} на {s['pack_size']} шт."
-        if s["price_per_pack"]
-        else "Сейчас цена пачки не задана."
-    )
-    await update.message.reply_html(
-        f"⚙️ <b>Настройки стоимости</b>\n{now}\n\nВыбери валюту:",
-        reply_markup=CUR_KB,
-    )
-    return SET_CUR
-
-
-async def settings_cur(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = (update.message.text or "").strip()
-    if text == BTN_CANCEL:
-        return await cancel(update, context)
-    if len(text) > 8:
-        await update.message.reply_text("Слишком длинно. Выбери валюту кнопкой.", reply_markup=CUR_KB)
-        return SET_CUR
-    context.user_data["s_cur"] = text
-    await update.message.reply_html(
-        f"Сколько стоит пачка? Напиши число (в {text}):", reply_markup=CANCEL_KB
-    )
-    return SET_PRICE
-
-
-async def settings_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = (update.message.text or "").strip().replace(",", ".")
-    if text == BTN_CANCEL.replace(",", "."):
-        return await cancel(update, context)
-    try:
-        price = float(text)
-    except ValueError:
-        await update.message.reply_text("Это не число. Напиши цену пачки, например 75.", reply_markup=CANCEL_KB)
-        return SET_PRICE
-    if price <= 0 or price > 100000:
-        await update.message.reply_text("Введи разумную цену.", reply_markup=CANCEL_KB)
-        return SET_PRICE
-    context.user_data["s_price"] = price
-    await update.message.reply_html(
-        "Сколько сигарет в пачке? (обычно 20)", reply_markup=PACK_KB
-    )
-    return SET_PACK
-
-
-async def settings_pack(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    u = update.effective_user
-    text = (update.message.text or "").strip()
-    if text == BTN_CANCEL:
-        return await cancel(update, context)
-    try:
-        pack = int(text)
-    except ValueError:
-        await update.message.reply_text("Напиши число, например 20.", reply_markup=PACK_KB)
-        return SET_PACK
-    if pack < 1 or pack > 100:
-        await update.message.reply_text("Введи число от 1 до 100.", reply_markup=PACK_KB)
-        return SET_PACK
-
-    cur = context.user_data.pop("s_cur", "грн")
-    price = context.user_data.pop("s_price", 0)
-    db.set_settings(u.id, cur, price, pack)
-    cost = price / pack
-    await update.message.reply_html(
-        f"✅ Готово! Пачка {fmt_money(price, cur)} на {pack} шт.\n"
-        f"Одна сигарета ≈ <b>{fmt_money(cost, cur)}</b>.\n"
-        "Теперь «💸 Сожжено» и статистика считают деньги.",
-        reply_markup=MAIN_KB,
-    )
-    return ConversationHandler.END
 
 
 async def photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -669,7 +724,6 @@ async def photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 def _btn(label: str) -> filters.BaseFilter:
-    """Точное совпадение текста кнопки."""
     import re
     return filters.Regex(f"^{re.escape(label)}$")
 
@@ -684,25 +738,28 @@ def main() -> None:
 
     app = Application.builder().token(token).build()
 
-    # Регистрация / смена имени
+    # Регистрация / смена имени (в т.ч. из настроек)
     name_conv = ConversationHandler(
         entry_points=[
             CommandHandler("start", start),
             CommandHandler("setname", setname_entry),
-            MessageHandler(_btn(BTN_NAME), setname_entry),
+            CallbackQueryHandler(setname_from_cb, pattern=r"^se:name$"),
         ],
         states={NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, name_received)]},
         fallbacks=[CommandHandler("cancel", cancel), MessageHandler(_btn(BTN_CANCEL), cancel)],
     )
 
-    # Добавление перекура
-    add_conv = ConversationHandler(
-        entry_points=[
-            CommandHandler("add", add_entry),
-            MessageHandler(_btn(BTN_ADD), add_entry),
-        ],
-        states={ADD_COUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_count)]},
+    # Открытие упаковки расходника (тип → цена)
+    expenses_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(expenses_new_entry, pattern=r"^ex:new$")],
+        states={
+            EX_PRICE: [
+                CallbackQueryHandler(expenses_new_kind, pattern=r"^exnew:"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, expenses_new_price),
+            ],
+        },
         fallbacks=[CommandHandler("cancel", cancel), MessageHandler(_btn(BTN_CANCEL), cancel)],
+        per_message=False,
     )
 
     # Редактирование
@@ -724,44 +781,37 @@ def main() -> None:
         fallbacks=[CommandHandler("cancel", cancel), MessageHandler(_btn(BTN_CANCEL), cancel)],
     )
 
-    # Настройки стоимости (валюта → цена → размер пачки)
-    settings_conv = ConversationHandler(
-        entry_points=[
-            CommandHandler("settings", settings_entry),
-            MessageHandler(_btn(BTN_SETTINGS), settings_entry),
-        ],
-        states={
-            SET_CUR: [MessageHandler(filters.TEXT & ~filters.COMMAND, settings_cur)],
-            SET_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, settings_price)],
-            SET_PACK: [MessageHandler(filters.TEXT & ~filters.COMMAND, settings_pack)],
-        },
-        fallbacks=[CommandHandler("cancel", cancel), MessageHandler(_btn(BTN_CANCEL), cancel)],
-    )
-
     app.add_handler(name_conv)
-    app.add_handler(add_conv)
+    app.add_handler(expenses_conv)
     app.add_handler(edit_conv)
-    app.add_handler(settings_conv)
 
-    # Информационные кнопки + команды-дубли
+    # Перекур
+    app.add_handler(CommandHandler("add", add_cmd))
+    app.add_handler(MessageHandler(_btn(BTN_ADD), add_cmd))
+
+    # Статистика
+    app.add_handler(CommandHandler("stats", stats_menu))
+    app.add_handler(MessageHandler(_btn(BTN_STATS), stats_menu))
+    app.add_handler(CallbackQueryHandler(stats_action, pattern=r"^st:"))
+
+    # Расходы
+    app.add_handler(CommandHandler("expenses", expenses_menu))
+    app.add_handler(MessageHandler(_btn(BTN_EXPENSES), expenses_menu))
+    app.add_handler(CallbackQueryHandler(expenses_action, pattern=r"^ex:(close|chart)$"))
+    app.add_handler(CallbackQueryHandler(expenses_close_kind, pattern=r"^exclose:"))
+
+    # Настройки
+    app.add_handler(CommandHandler("settings", settings_menu))
+    app.add_handler(MessageHandler(_btn(BTN_SETTINGS), settings_menu))
+    app.add_handler(CallbackQueryHandler(settings_currency_menu, pattern=r"^se:cur$"))
+    app.add_handler(CallbackQueryHandler(settings_currency_set, pattern=r"^secur:"))
+
+    # Рейтинг, помощь, прочее
+    app.add_handler(CommandHandler("top", top_cmd))
+    app.add_handler(MessageHandler(_btn(BTN_TOP), top_cmd))
     app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(MessageHandler(_btn(BTN_HELP), help_cmd))
     app.add_handler(CommandHandler("today", today_cmd))
-    app.add_handler(CommandHandler("stats", stats))
-    app.add_handler(MessageHandler(_btn(BTN_STATS), stats))
-    app.add_handler(CommandHandler("chart", chart_cmd))
-    app.add_handler(MessageHandler(_btn(BTN_CHART), chart_cmd))
-    app.add_handler(CommandHandler("total", total_cmd))
-    app.add_handler(CommandHandler("days", days_cmd))
-    app.add_handler(MessageHandler(_btn(BTN_DAYS), days_cmd))
-    app.add_handler(CommandHandler("money", money_cmd))
-    app.add_handler(MessageHandler(_btn(BTN_MONEY), money_cmd))
-    app.add_handler(CommandHandler("intervals", intervals_cmd))
-    app.add_handler(MessageHandler(_btn(BTN_INTERVALS), intervals_cmd))
-    app.add_handler(CommandHandler("trend", trend_cmd))
-    app.add_handler(MessageHandler(_btn(BTN_TREND), trend_cmd))
-    app.add_handler(CommandHandler("top", top_cmd))
-    app.add_handler(MessageHandler(_btn(BTN_TOP), top_cmd))
     app.add_handler(MessageHandler(filters.PHOTO, photo))
 
     log.info("Бот запущен")

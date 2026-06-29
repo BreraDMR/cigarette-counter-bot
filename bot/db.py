@@ -361,36 +361,15 @@ def open_consumables(user_id: int) -> list[tuple[str, float, str, str]]:
         return [(r["kind"], float(r["price"]), r["currency"], r["opened_at"]) for r in rows]
 
 
-def total_spent(user_id: int) -> float:
-    """Сумма всех купленных упаковок (открытых и закрытых)."""
-    with _connect() as conn:
-        row = conn.execute(
-            "SELECT COALESCE(SUM(price), 0) AS t FROM consumables WHERE user_id = ?",
-            (user_id,),
-        ).fetchone()
-        return float(row["t"])
-
-
-def spent_by_kind(user_id: int) -> list[tuple[str, float, int]]:
-    """Траты по типам: [(kind, сумма, кол-во упаковок), ...] по убыванию суммы."""
+def all_consumables(user_id: int) -> list[tuple[str, float, str]]:
+    """Все купленные упаковки: [(kind, price, currency), ...] —
+    валюту храним по каждой покупке, чтобы потом сконвертировать в Python."""
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT kind, SUM(price) AS total, COUNT(*) AS n FROM consumables "
-            "WHERE user_id = ? GROUP BY kind ORDER BY total DESC",
+            "SELECT kind, price, currency FROM consumables WHERE user_id = ?",
             (user_id,),
         ).fetchall()
-        return [(r["kind"], float(r["total"]), int(r["n"])) for r in rows]
-
-
-def spent_per_day(user_id: int) -> list[tuple[str, float]]:
-    """Траты по дням покупки упаковок: [(YYYY-MM-DD, сумма), ...]."""
-    with _connect() as conn:
-        rows = conn.execute(
-            "SELECT substr(opened_at, 1, 10) AS day, SUM(price) AS total "
-            "FROM consumables WHERE user_id = ? GROUP BY day ORDER BY day",
-            (user_id,),
-        ).fetchall()
-        return [(r["day"], float(r["total"])) for r in rows]
+        return [(r["kind"], float(r["price"]), r["currency"]) for r in rows]
 
 
 def leaderboard_week(start: str, end: str) -> list[tuple[str, int]]:

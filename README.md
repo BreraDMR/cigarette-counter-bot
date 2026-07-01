@@ -66,9 +66,12 @@ higher**), and attach a photo to a smoke break. All data lives in SQLite, kept
   money went" pie by consumable.
 - **🏆 Reverse leaderboard** (`/top`) — "who's calmest" this week, **fewer is higher**.
 - **✏️ Entries** — the bot shows recent entries as buttons; pick one, then
-  "✏️ Change number" or "🗑 Delete" (with confirmation). You can only edit your own.
-- **⚙️ Settings** — change your name and currency (EUR / UAH / CZK, with
-  auto-conversion of past expenses at an approximate rate).
+  "✏️ Change number", "🕐 Change time" or "🗑 Delete" (with confirmation). You can
+  only edit your own.
+- **🌐 Languages** — the interface is available in **English (default)**, Russian
+  and Czech; switch any time in **⚙️ Settings**. New users start in English.
+- **⚙️ Settings** — change your name, currency (EUR / UAH / CZK, with
+  auto-conversion of past expenses at an approximate rate) and language.
 - **Photos (optional)** — send a photo after a break and it's saved locally
   (`data/photos/<user_id>/`) and attached to the last entry.
 - **Multi-user** — data isolated per `user_id`.
@@ -85,7 +88,7 @@ Buttons are usually enough, but everything is available as a command too:
 | `/expenses` | expenses menu (consumables) |
 | `/top` | weekly leaderboard (fewer is higher) |
 | `/edit` | pick an entry and fix/delete it |
-| `/settings` | change your name and currency |
+| `/settings` | change your name, currency and language |
 | `/today` | how many cigarettes today |
 | `/cancel` | cancel the current dialog |
 | `/help` | help |

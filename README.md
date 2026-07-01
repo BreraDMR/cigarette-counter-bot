@@ -69,7 +69,8 @@ higher**), and attach a photo to a smoke break. All data lives in SQLite, kept
   "✏️ Change number", "🕐 Change time" or "🗑 Delete" (with confirmation). You can
   only edit your own.
 - **🌐 Languages** — the interface is available in **English (default)**, Russian
-  and Czech; switch any time in **⚙️ Settings**. New users start in English.
+  and Czech; switch any time in **⚙️ Settings**. New users start in English with
+  **EUR** as the default currency.
 - **⚙️ Settings** — change your name, currency (EUR / UAH / CZK, with
   auto-conversion of past expenses at an approximate rate) and language.
 - **Photos (optional)** — send a photo after a break and it's saved locally

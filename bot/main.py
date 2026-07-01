@@ -636,9 +636,11 @@ async def edit_picked(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("Это не твоя запись 🙅")
         return ConversationHandler.END
     context.user_data["edit_id"] = set_id
+    context.user_data.pop("edit_mode", None)
     kb = InlineKeyboardMarkup(
         [
             [InlineKeyboardButton("✏️ Изменить число", callback_data=f"chg:{set_id}:{count}")],
+            [InlineKeyboardButton("🕐 Изменить время", callback_data=f"time:{set_id}")],
             [InlineKeyboardButton("🗑 Удалить запись", callback_data=f"del:{set_id}")],
         ]
     )
@@ -653,8 +655,31 @@ async def edit_change(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     _, set_id, count = query.data.split(":")
     context.user_data["edit_id"] = int(set_id)
+    context.user_data["edit_mode"] = "count"
     await query.edit_message_text(
         f"Запись №{set_id} (сейчас: {count} шт).\nНапиши новое число:"
+    )
+    return EDIT_VALUE
+
+
+async def edit_time_ask(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    set_id = int(query.data.split(":")[1])
+    if db.set_owner(set_id) != query.from_user.id:
+        await query.edit_message_text("Это не твоя запись 🙅")
+        return ConversationHandler.END
+    context.user_data["edit_id"] = set_id
+    context.user_data["edit_mode"] = "time"
+    cur_iso = db.set_created_at(set_id)
+    now = cur_iso.replace("T", " ")[:16] if cur_iso else ""
+    await query.edit_message_text(
+        f"Запись №{set_id} (сейчас: {now}).\n"
+        "Напиши новое время. Можно так:\n"
+        "• <code>14:30</code> — только время (дата останется прежней)\n"
+        "• <code>01.07 14:30</code> — день и время\n"
+        "• <code>2026-07-01 14:30</code> — полностью",
+        parse_mode="HTML",
     )
     return EDIT_VALUE
 
@@ -698,6 +723,39 @@ async def edit_delete_no(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
+def _parse_new_time(text: str, current_iso: str) -> str | None:
+    """Разбирает введённое пользователем время в ISO-строку.
+    Недостающие части (год/дату) берёт из текущего времени записи."""
+    text = text.strip().replace("T", " ")
+    try:
+        cur = datetime.fromisoformat(current_iso)
+    except (ValueError, TypeError):
+        cur = datetime.now()
+    fmts = [
+        ("%Y-%m-%d %H:%M:%S", None),
+        ("%Y-%m-%d %H:%M", None),
+        ("%d.%m.%Y %H:%M", None),
+        ("%d.%m %H:%M", "year"),
+        ("%d.%m.%Y", "midnight"),
+        ("%d.%m", "year_midnight"),
+        ("%H:%M:%S", "date"),
+        ("%H:%M", "date"),
+    ]
+    for fmt, fill in fmts:
+        try:
+            dt = datetime.strptime(text, fmt)
+        except ValueError:
+            continue
+        if fill == "year":
+            dt = dt.replace(year=cur.year)
+        elif fill == "year_midnight":
+            dt = dt.replace(year=cur.year)
+        elif fill == "date":
+            dt = dt.replace(year=cur.year, month=cur.month, day=cur.day)
+        return dt.replace(second=0, microsecond=0).isoformat(timespec="seconds")
+    return None
+
+
 async def edit_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u = update.effective_user
     text = (update.message.text or "").strip().lower()
@@ -713,6 +771,24 @@ async def edit_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if db.set_owner(set_id) != u.id:
         await update.message.reply_text("Это не твоя запись 🙅", reply_markup=MAIN_KB)
         context.user_data.pop("edit_id", None)
+        context.user_data.pop("edit_mode", None)
+        return ConversationHandler.END
+    if context.user_data.get("edit_mode") == "time":
+        raw = (update.message.text or "").strip()
+        new_iso = _parse_new_time(raw, db.set_created_at(set_id))
+        if new_iso is None:
+            await update.message.reply_text(
+                "Не понял время 🤔 Напиши, например, «14:30» или «01.07 14:30».",
+                reply_markup=CANCEL_KB,
+            )
+            return EDIT_VALUE
+        db.edit_set_time(set_id, new_iso)
+        context.user_data.pop("edit_id", None)
+        context.user_data.pop("edit_mode", None)
+        await update.message.reply_html(
+            f"🕐 Время записи №{set_id} изменено на <b>{new_iso.replace('T', ' ')[:16]}</b>.",
+            reply_markup=MAIN_KB,
+        )
         return ConversationHandler.END
     if text in ("удалить", "удали", "delete"):
         db.delete_set(set_id)
@@ -736,6 +812,7 @@ async def edit_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return EDIT_VALUE
     db.edit_set(set_id, count)
     context.user_data.pop("edit_id", None)
+    context.user_data.pop("edit_mode", None)
     await update.message.reply_html(
         f"✏️ Запись №{set_id} изменена на <b>{count}</b>. "
         f"Всего теперь: <b>{db.total_count(u.id)}</b>",
@@ -746,6 +823,7 @@ async def edit_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.pop("edit_id", None)
+    context.user_data.pop("edit_mode", None)
     context.user_data.pop("ex_kind", None)
     await update.message.reply_text("Отменил. 👌", reply_markup=MAIN_KB)
     return ConversationHandler.END
@@ -755,6 +833,7 @@ async def conv_escape(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Нажата кнопка главного меню посреди диалога — выходим из диалога
     и сразу выполняем то, что человек хотел (чтобы бот не «залипал»)."""
     context.user_data.pop("edit_id", None)
+    context.user_data.pop("edit_mode", None)
     context.user_data.pop("ex_kind", None)
     text = (update.message.text or "").strip()
     handler = {
@@ -874,6 +953,7 @@ def main() -> None:
             EDIT_VALUE: [
                 CallbackQueryHandler(edit_picked, pattern=r"^pick:"),
                 CallbackQueryHandler(edit_change, pattern=r"^chg:"),
+                CallbackQueryHandler(edit_time_ask, pattern=r"^time:"),
                 CallbackQueryHandler(edit_delete_ask, pattern=r"^del:"),
                 CallbackQueryHandler(edit_delete_ok, pattern=r"^delok:"),
                 CallbackQueryHandler(edit_delete_no, pattern=r"^delno$"),

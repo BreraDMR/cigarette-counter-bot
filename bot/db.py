@@ -271,6 +271,22 @@ def edit_set(set_id: int, count: int) -> None:
         conn.execute("UPDATE sets SET count = ? WHERE id = ?", (count, set_id))
 
 
+def set_created_at(set_id: int) -> Optional[str]:
+    """Время перекура (ISO-строка), либо None если записи нет."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT created_at FROM sets WHERE id = ?", (set_id,)
+        ).fetchone()
+        return row["created_at"] if row else None
+
+
+def edit_set_time(set_id: int, created_at: str) -> None:
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE sets SET created_at = ? WHERE id = ?", (created_at, set_id)
+        )
+
+
 def delete_set(set_id: int) -> None:
     with _connect() as conn:
         conn.execute("DELETE FROM sets WHERE id = ?", (set_id,))

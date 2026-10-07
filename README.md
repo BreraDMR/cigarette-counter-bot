@@ -12,6 +12,10 @@
 
 </div>
 
+https://github.com/user-attachments/assets/89a7af74-df06-46f3-b5d7-fff12d0bce80
+
+<sub>A 21-second overview. The chat is the bot's own replies, buttons and charts, recorded offline from its real handlers on demo data. The file is also in <a href="docs/media/cigarette-counter-bot-overview.mp4"><code>docs/media/cigarette-counter-bot-overview.mp4</code></a>.</sub>
+
 A Telegram bot that counts the cigarettes you smoke. It's fully interactive:
 everything is driven by **on-screen buttons**, so there's no syntax to memorize.
 One break = one cigarette, logged in a single tap. See clean Excel-style charts
